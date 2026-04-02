@@ -35,3 +35,4 @@ git log --author="yuri-xyz" --oneline
 - Added a default Plan-mode handoff option to implement with fresh context, which starts a new session before sending the normal implementation handoff message.
 - Changed Plan-mode implementation handoff so it submits the actual proposed plan text followed by `Implement the plan.` instead of sending only the bare implementation sentence.
 - Adjusted the fresh-context Plan handoff to use the full clear-UI path so it clears visible chat history as well as model context before starting implementation in a new session.
+- Disabled all GitHub Actions in this fork by moving workflow YAML files out of `.github/workflows`, so GitHub no longer discovers or runs the upstream CI/release/automation workflows here.
