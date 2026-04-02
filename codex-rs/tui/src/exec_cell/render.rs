@@ -683,7 +683,7 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
     PrefixedBlock::new("  │ ", "  │ "),
     /*command_continuation_max_lines*/ 2,
     PrefixedBlock::new("  └ ", "    "),
-    /*output_max_lines*/ 5,
+    /*output_max_lines*/ 9,
 );
 
 #[cfg(test)]
@@ -784,6 +784,55 @@ mod tests {
         assert!(
             contains_ellipsis,
             "expected truncated output to include an ellipsis line"
+        );
+    }
+
+    #[test]
+    fn agent_exec_output_shows_four_head_and_tail_lines_before_truncating() {
+        let aggregated_output = (0..12)
+            .map(|idx| format!("line-{idx}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec!["bash".into(), "-lc".into(), "echo done".into()],
+            parsed: Vec::new(),
+            output: Some(CommandOutput {
+                exit_code: 0,
+                formatted_output: String::new(),
+                aggregated_output,
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let cell = ExecCell::new(call, /*animations_enabled*/ false);
+        let rendered: Vec<String> = cell
+            .command_display_lines(/*width*/ 80)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        assert!(rendered.iter().any(|line| line.contains("line-0")));
+        assert!(rendered.iter().any(|line| line.contains("line-3")));
+        assert!(rendered.iter().any(|line| line.contains("… +4 lines")));
+        assert!(rendered.iter().any(|line| line.contains("line-8")));
+        assert!(rendered.iter().any(|line| line.contains("line-11")));
+        assert!(
+            rendered.iter().all(|line| !line.contains("line-4")),
+            "expected middle output lines to be truncated: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().all(|line| !line.contains("line-7")),
+            "expected middle output lines to be truncated: {rendered:?}"
         );
     }
 

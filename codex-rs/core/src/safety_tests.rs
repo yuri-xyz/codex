@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::protocol::FileSystemAccessMode;
 use codex_protocol::protocol::FileSystemPath;
 use codex_protocol::protocol::FileSystemSandboxEntry;
@@ -73,6 +74,7 @@ fn external_sandbox_auto_approves_in_on_request() {
     assert_eq!(
         assess_patch_safety(
             &add_inside,
+            ModeKind::Default,
             AskForApproval::OnRequest,
             &policy,
             &FileSystemSandboxPolicy::from(&policy),
@@ -104,6 +106,7 @@ fn granular_with_all_flags_true_matches_on_request_for_out_of_root_patch() {
     assert_eq!(
         assess_patch_safety(
             &add_outside,
+            ModeKind::Default,
             AskForApproval::OnRequest,
             &policy_workspace_only,
             &FileSystemSandboxPolicy::from(&policy_workspace_only),
@@ -115,6 +118,7 @@ fn granular_with_all_flags_true_matches_on_request_for_out_of_root_patch() {
     assert_eq!(
         assess_patch_safety(
             &add_outside,
+            ModeKind::Default,
             AskForApproval::Granular(GranularApprovalConfig {
                 sandbox_approval: true,
                 rules: true,
@@ -149,6 +153,7 @@ fn granular_sandbox_approval_false_rejects_out_of_root_patch() {
     assert_eq!(
         assess_patch_safety(
             &add_outside,
+            ModeKind::Default,
             AskForApproval::Granular(GranularApprovalConfig {
                 sandbox_approval: false,
                 rules: true,
@@ -200,6 +205,7 @@ fn explicit_unreadable_paths_prevent_auto_approval_for_external_sandbox() {
     assert_eq!(
         assess_patch_safety(
             &action,
+            ModeKind::Default,
             AskForApproval::OnRequest,
             &sandbox_policy,
             &file_system_sandbox_policy,
@@ -243,6 +249,7 @@ fn explicit_read_only_subpaths_prevent_auto_approval_for_external_sandbox() {
     assert_eq!(
         assess_patch_safety(
             &action,
+            ModeKind::Default,
             AskForApproval::OnRequest,
             &sandbox_policy,
             &file_system_sandbox_policy,
@@ -277,6 +284,36 @@ fn missing_project_dot_codex_config_requires_approval() {
     assert_eq!(
         assess_patch_safety(
             &action,
+            ModeKind::Default,
+            AskForApproval::OnRequest,
+            &sandbox_policy,
+            &file_system_sandbox_policy,
+            &cwd,
+            WindowsSandboxLevel::Disabled,
+        ),
+        SafetyCheck::AskUser,
+    );
+}
+
+#[test]
+fn build_mode_requires_approval_for_in_workspace_patch() {
+    let tmp = TempDir::new().unwrap();
+    let cwd = tmp.path().to_path_buf();
+    let action = ApplyPatchAction::new_add_for_test(&cwd.join("inner.txt"), "".to_string());
+    let sandbox_policy = SandboxPolicy::WorkspaceWrite {
+        writable_roots: vec![],
+        read_only_access: Default::default(),
+        network_access: false,
+        exclude_tmpdir_env_var: true,
+        exclude_slash_tmp: true,
+    };
+    let file_system_sandbox_policy =
+        FileSystemSandboxPolicy::from_legacy_sandbox_policy(&sandbox_policy, &cwd);
+
+    assert_eq!(
+        assess_patch_safety(
+            &action,
+            ModeKind::Build,
             AskForApproval::OnRequest,
             &sandbox_policy,
             &file_system_sandbox_policy,

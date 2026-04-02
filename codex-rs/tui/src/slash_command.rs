@@ -45,7 +45,6 @@ pub enum SlashCommand {
     Logout,
     Quit,
     Exit,
-    Rollout,
     Ps,
     #[strum(to_string = "stop", serialize = "clean")]
     Stop,
@@ -53,7 +52,6 @@ pub enum SlashCommand {
     Personality,
     Realtime,
     Settings,
-    TestApproval,
     #[strum(serialize = "subagents")]
     MultiAgents,
     // Debugging commands.
@@ -107,8 +105,6 @@ impl SlashCommand {
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Logout => "log out of Codex",
-            SlashCommand::Rollout => "print the rollout file path",
-            SlashCommand::TestApproval => "test approval request",
         }
     }
 
@@ -165,8 +161,6 @@ impl SlashCommand {
             | SlashCommand::Apps
             | SlashCommand::Quit
             | SlashCommand::Exit => true,
-            SlashCommand::Rollout => true,
-            SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
             SlashCommand::Collab => true,
@@ -181,7 +175,6 @@ impl SlashCommand {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),
-            SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
             _ => true,
         }
     }

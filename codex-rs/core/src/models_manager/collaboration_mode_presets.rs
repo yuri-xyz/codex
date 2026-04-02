@@ -6,6 +6,8 @@ use codex_utils_template::Template;
 use std::sync::LazyLock;
 
 const COLLABORATION_MODE_PLAN: &str = include_str!("../../templates/collaboration_mode/plan.md");
+const COLLABORATION_MODE_BUILD: &str =
+    include_str!("../../templates/collaboration_mode/build.md");
 const COLLABORATION_MODE_DEFAULT: &str =
     include_str!("../../templates/collaboration_mode/default.md");
 const KNOWN_MODE_NAMES_TEMPLATE_KEY: &str = "KNOWN_MODE_NAMES";
@@ -21,16 +23,28 @@ static COLLABORATION_MODE_DEFAULT_TEMPLATE: LazyLock<Template> = LazyLock::new(|
 /// Keep mode-related flags here so new collaboration-mode capabilities can be
 /// added without large cross-cutting diffs to constructor and call-site
 /// signatures.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CollaborationModesConfig {
     /// Enables `request_user_input` availability in Default mode.
     pub default_mode_request_user_input: bool,
 }
 
+impl Default for CollaborationModesConfig {
+    fn default() -> Self {
+        Self {
+            default_mode_request_user_input: true,
+        }
+    }
+}
+
 pub fn builtin_collaboration_mode_presets(
     collaboration_modes_config: CollaborationModesConfig,
 ) -> Vec<CollaborationModeMask> {
-    vec![plan_preset(), default_preset(collaboration_modes_config)]
+    vec![
+        default_preset(collaboration_modes_config),
+        build_preset(),
+        plan_preset(),
+    ]
 }
 
 fn plan_preset() -> CollaborationModeMask {
@@ -40,6 +54,16 @@ fn plan_preset() -> CollaborationModeMask {
         model: None,
         reasoning_effort: Some(Some(ReasoningEffort::Medium)),
         developer_instructions: Some(Some(COLLABORATION_MODE_PLAN.to_string())),
+    }
+}
+
+fn build_preset() -> CollaborationModeMask {
+    CollaborationModeMask {
+        name: ModeKind::Build.display_name().to_string(),
+        mode: Some(ModeKind::Build),
+        model: None,
+        reasoning_effort: None,
+        developer_instructions: Some(Some(COLLABORATION_MODE_BUILD.to_string())),
     }
 }
 

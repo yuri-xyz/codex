@@ -5277,50 +5277,6 @@ impl ChatWidget {
             SlashCommand::Apps => {
                 self.add_connectors_output();
             }
-            SlashCommand::Rollout => {
-                if let Some(path) = self.rollout_path() {
-                    self.add_info_message(
-                        format!("Current rollout path: {}", path.display()),
-                        /*hint*/ None,
-                    );
-                } else {
-                    self.add_info_message(
-                        "Rollout path is not available yet.".to_string(),
-                        /*hint*/ None,
-                    );
-                }
-            }
-            SlashCommand::TestApproval => {
-                use std::collections::HashMap;
-
-                use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-                use codex_protocol::protocol::FileChange;
-
-                self.on_apply_patch_approval_request(
-                    "1".to_string(),
-                    ApplyPatchApprovalRequestEvent {
-                        call_id: "1".to_string(),
-                        turn_id: "turn-1".to_string(),
-                        changes: HashMap::from([
-                            (
-                                PathBuf::from("/tmp/test.txt"),
-                                FileChange::Add {
-                                    content: "test".to_string(),
-                                },
-                            ),
-                            (
-                                PathBuf::from("/tmp/test2.txt"),
-                                FileChange::Update {
-                                    unified_diff: "+test\n-test2".to_string(),
-                                    move_path: None,
-                                },
-                            ),
-                        ]),
-                        reason: None,
-                        grant_root: Some(PathBuf::from("/tmp")),
-                    },
-                );
-            }
         }
     }
 
@@ -9695,6 +9651,7 @@ impl ChatWidget {
             return None;
         }
         match self.active_mode_kind() {
+            ModeKind::Build => Some(CollaborationModeIndicator::Build),
             ModeKind::Plan => Some(CollaborationModeIndicator::Plan),
             ModeKind::Default | ModeKind::PairProgramming | ModeKind::Execute => None,
         }
@@ -9721,7 +9678,7 @@ impl ChatWidget {
         }
     }
 
-    /// Cycle to the next collaboration mode variant (Plan -> Default -> Plan).
+    /// Cycle to the next collaboration mode variant in preset order.
     fn cycle_collaboration_mode(&mut self) {
         if !self.collaboration_modes_enabled() {
             return;

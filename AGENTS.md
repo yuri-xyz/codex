@@ -2,10 +2,16 @@
 
 ## Fork Change Log
 
+- This repository is a forked, personal version of Codex maintained under `yuri-xyz`.
 - This personal fork documents its high-level customizations in the repo-root `CHANGES.md`.
 - After making meaningful fork-specific changes, update `CHANGES.md` with a brief, high-level summary of what changed and why.
 - Keep `CHANGES.md` concise. Document outcomes such as privacy hardening, removed features, workflow changes, or notable product behavior differences.
 - When detailed provenance is needed, the exact fork-specific changes can also be inspected through Git history filtered to commits authored by `yuri-xyz`.
+- Prefer minimal, low-friction fork patches so upstream pulls and merges stay easy.
+- Minimize code churn: prefer additive or narrowly targeted changes over broad refactors of pre-existing code.
+- When practical, prefer stubbing or short-circuiting behavior instead of reshaping large parts of the codebase.
+- Avoid opportunistic cleanup or unrelated refactors unless they are necessary to make the fork-specific change work correctly.
+- Optimize for fully functional behavior with the smallest reasonable diff, especially in high-churn upstream files, to reduce future Git conflicts.
 
 In the codex-rs folder where the rust code lives:
 

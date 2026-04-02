@@ -4,6 +4,7 @@ use pretty_assertions::assert_eq;
 #[test]
 fn preset_names_use_mode_display_names() {
     assert_eq!(plan_preset().name, ModeKind::Plan.display_name());
+    assert_eq!(build_preset().name, ModeKind::Build.display_name());
     assert_eq!(
         default_preset(CollaborationModesConfig::default()).name,
         ModeKind::Default.display_name()
@@ -12,6 +13,17 @@ fn preset_names_use_mode_display_names() {
         plan_preset().reasoning_effort,
         Some(Some(ReasoningEffort::Medium))
     );
+}
+
+#[test]
+fn build_preset_includes_build_mode_instructions() {
+    let build_instructions = build_preset()
+        .developer_instructions
+        .expect("build preset should include instructions")
+        .expect("build instructions should be set");
+
+    assert!(build_instructions.contains("You are now in Build mode."));
+    assert!(build_instructions.contains("file edits require explicit approval"));
 }
 
 #[test]
@@ -40,11 +52,23 @@ fn default_mode_instructions_replace_mode_names_placeholder() {
 }
 
 #[test]
-fn default_mode_instructions_use_plain_text_questions_when_feature_disabled() {
+fn default_mode_instructions_prefer_request_user_input_by_default() {
     let default_instructions = default_preset(CollaborationModesConfig::default())
         .developer_instructions
         .expect("default preset should include instructions")
         .expect("default instructions should be set");
+
+    assert!(default_instructions.contains("prefer using the `request_user_input` tool"));
+}
+
+#[test]
+fn default_mode_instructions_use_plain_text_questions_when_feature_disabled() {
+    let default_instructions = default_preset(CollaborationModesConfig {
+        default_mode_request_user_input: false,
+    })
+    .developer_instructions
+    .expect("default preset should include instructions")
+    .expect("default instructions should be set");
 
     assert!(!default_instructions.contains("prefer using the `request_user_input` tool"));
     assert!(

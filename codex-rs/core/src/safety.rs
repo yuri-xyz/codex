@@ -8,6 +8,7 @@ use crate::protocol::SandboxPolicy;
 use crate::util::resolve_path;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_sandboxing::SandboxType;
 use codex_sandboxing::get_platform_sandbox;
@@ -26,6 +27,7 @@ pub enum SafetyCheck {
 
 pub fn assess_patch_safety(
     action: &ApplyPatchAction,
+    collaboration_mode: ModeKind,
     policy: AskForApproval,
     sandbox_policy: &SandboxPolicy,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
@@ -36,6 +38,10 @@ pub fn assess_patch_safety(
         return SafetyCheck::Reject {
             reason: "empty patch".to_string(),
         };
+    }
+
+    if collaboration_mode == ModeKind::Build {
+        return SafetyCheck::AskUser;
     }
 
     match policy {

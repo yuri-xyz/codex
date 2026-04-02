@@ -334,7 +334,7 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         }),
         create_write_stdin_tool(),
         create_update_plan_tool(),
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ false),
+        request_user_input_tool_spec(/*default_mode_request_user_input*/ true),
         create_apply_patch_freeform_tool(),
         ToolSpec::WebSearch {
             external_web_access: Some(true),
@@ -782,10 +782,10 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
     let request_user_input_tool = find_tool(&tools, "request_user_input");
     assert_eq!(
         request_user_input_tool.spec,
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ false)
+        request_user_input_tool_spec(/*default_mode_request_user_input*/ true)
     );
 
-    features.enable(Feature::DefaultModeRequestUserInput);
+    features.disable(Feature::DefaultModeRequestUserInput);
     let available_models = Vec::new();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
@@ -806,7 +806,7 @@ fn request_user_input_description_reflects_default_mode_feature_flag() {
     let request_user_input_tool = find_tool(&tools, "request_user_input");
     assert_eq!(
         request_user_input_tool.spec,
-        request_user_input_tool_spec(/*default_mode_request_user_input*/ true)
+        request_user_input_tool_spec(/*default_mode_request_user_input*/ false)
     );
 }
 
