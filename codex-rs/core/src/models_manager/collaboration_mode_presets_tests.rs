@@ -6,6 +6,10 @@ fn preset_names_use_mode_display_names() {
     assert_eq!(plan_preset().name, ModeKind::Plan.display_name());
     assert_eq!(build_preset().name, ModeKind::Build.display_name());
     assert_eq!(
+        unrestricted_preset().name,
+        ModeKind::Unrestricted.display_name()
+    );
+    assert_eq!(
         default_preset(CollaborationModesConfig::default()).name,
         ModeKind::Default.display_name()
     );
@@ -24,6 +28,17 @@ fn build_preset_includes_build_mode_instructions() {
 
     assert!(build_instructions.contains("You are now in Build mode."));
     assert!(build_instructions.contains("runtime/UI will request it automatically"));
+}
+
+#[test]
+fn unrestricted_preset_includes_unrestricted_mode_instructions() {
+    let unrestricted_instructions = unrestricted_preset()
+        .developer_instructions
+        .expect("unrestricted preset should include instructions")
+        .expect("unrestricted instructions should be set");
+
+    assert!(unrestricted_instructions.contains("You are now in Unrestricted mode."));
+    assert!(unrestricted_instructions.contains("avoid approval prompts"));
 }
 
 #[test]

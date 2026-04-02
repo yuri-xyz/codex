@@ -806,10 +806,12 @@ impl BottomPane {
         queued: Vec<String>,
         pending_steers: Vec<String>,
         rejected_steers: Vec<String>,
+        stashed: Vec<String>,
     ) {
         self.pending_input_preview.pending_steers = pending_steers;
         self.pending_input_preview.rejected_steers = rejected_steers;
         self.pending_input_preview.queued_messages = queued;
+        self.pending_input_preview.stashed_messages = stashed;
         self.request_redraw();
     }
 
@@ -1531,6 +1533,7 @@ mod tests {
             vec!["Queued follow-up question".to_string()],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         );
 
         let width = 48;
@@ -1560,6 +1563,7 @@ mod tests {
         pane.set_task_running(/*running*/ true);
         pane.set_pending_input_preview(
             vec!["Queued follow-up question".to_string()],
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );
@@ -1592,6 +1596,7 @@ mod tests {
         pane.set_task_running(/*running*/ true);
         pane.set_pending_input_preview(
             vec!["Queued follow-up question".to_string()],
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );

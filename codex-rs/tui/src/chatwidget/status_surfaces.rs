@@ -429,10 +429,7 @@ impl ChatWidget {
             StatusLineItem::ContextUsed => {
                 let used = self.status_line_context_used_percent()?.clamp(0, 100);
                 if used >= 85 {
-                    Some(Span::styled(
-                        value,
-                        Style::default().fg(Color::Yellow),
-                    ))
+                    Some(Span::styled(value, Style::default().fg(Color::Yellow)))
                 } else {
                     Some(value.into())
                 }

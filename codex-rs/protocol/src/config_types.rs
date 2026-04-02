@@ -397,6 +397,7 @@ pub enum ModeKind {
     )]
     Default,
     Build,
+    Unrestricted,
     Plan,
     #[doc(hidden)]
     #[serde(skip_serializing, skip_deserializing)]
@@ -410,14 +411,19 @@ pub enum ModeKind {
     Execute,
 }
 
-pub const TUI_VISIBLE_COLLABORATION_MODES: [ModeKind; 3] =
-    [ModeKind::Default, ModeKind::Build, ModeKind::Plan];
+pub const TUI_VISIBLE_COLLABORATION_MODES: [ModeKind; 4] = [
+    ModeKind::Default,
+    ModeKind::Build,
+    ModeKind::Unrestricted,
+    ModeKind::Plan,
+];
 
 impl ModeKind {
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::Default => "Default",
             Self::Build => "Build",
+            Self::Unrestricted => "Unrestricted",
             Self::Plan => "Plan",
             Self::PairProgramming => "Pair Programming",
             Self::Execute => "Execute",
@@ -425,7 +431,10 @@ impl ModeKind {
     }
 
     pub const fn is_tui_visible(self) -> bool {
-        matches!(self, Self::Default | Self::Build | Self::Plan)
+        matches!(
+            self,
+            Self::Default | Self::Build | Self::Unrestricted | Self::Plan
+        )
     }
 
     pub const fn allows_request_user_input(self) -> bool {
@@ -567,7 +576,12 @@ mod tests {
 
     #[test]
     fn tui_visible_collaboration_modes_match_mode_kind_visibility() {
-        let expected = [ModeKind::Default, ModeKind::Build, ModeKind::Plan];
+        let expected = [
+            ModeKind::Default,
+            ModeKind::Build,
+            ModeKind::Unrestricted,
+            ModeKind::Plan,
+        ];
         assert_eq!(expected, TUI_VISIBLE_COLLABORATION_MODES);
 
         for mode in TUI_VISIBLE_COLLABORATION_MODES {

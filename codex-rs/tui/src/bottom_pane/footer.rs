@@ -89,6 +89,7 @@ pub(crate) struct FooterProps {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CollaborationModeIndicator {
     Build,
+    Unrestricted,
     Plan,
     #[allow(dead_code)] // Hidden by current mode filtering; kept for future UI re-enablement.
     PairProgramming,
@@ -108,6 +109,7 @@ impl CollaborationModeIndicator {
         };
         match self {
             CollaborationModeIndicator::Build => format!("Build mode{suffix}"),
+            CollaborationModeIndicator::Unrestricted => format!("Unrestricted mode{suffix}"),
             CollaborationModeIndicator::Plan => format!("Plan mode{suffix}"),
             CollaborationModeIndicator::PairProgramming => {
                 format!("Pair Programming mode{suffix}")
@@ -120,6 +122,7 @@ impl CollaborationModeIndicator {
         let label = self.label(show_cycle_hint);
         match self {
             CollaborationModeIndicator::Build => Span::from(label).yellow(),
+            CollaborationModeIndicator::Unrestricted => Span::from(label).red(),
             CollaborationModeIndicator::Plan => Span::from(label).magenta(),
             CollaborationModeIndicator::PairProgramming => Span::from(label).cyan(),
             CollaborationModeIndicator::Execute => Span::from(label).dim(),

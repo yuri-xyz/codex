@@ -18,6 +18,7 @@ use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use codex_features::Features;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::mcp::RequestId;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::ElicitationAction;
@@ -249,6 +250,17 @@ impl ApprovalOverlay {
         self.advance_queue();
     }
 
+    fn approve_with_unrestricted_mode(&mut self) -> bool {
+        if self.current_complete || self.options.is_empty() {
+            return false;
+        }
+
+        self.app_event_tx
+            .send(AppEvent::SetCollaborationMode(ModeKind::Unrestricted));
+        self.apply_selection(0);
+        true
+    }
+
     fn handle_exec_decision(&self, id: &str, command: &[String], decision: ReviewDecision) {
         let Some(request) = self.current_request.as_ref() else {
             return;
@@ -354,6 +366,11 @@ impl ApprovalOverlay {
 
     fn try_handle_shortcut(&mut self, key_event: &KeyEvent) -> bool {
         match key_event {
+            KeyEvent {
+                kind: KeyEventKind::Press,
+                code: KeyCode::BackTab,
+                ..
+            } => self.approve_with_unrestricted_mode(),
             KeyEvent {
                 kind: KeyEventKind::Press,
                 code: KeyCode::Char('a'),
@@ -945,6 +962,35 @@ mod tests {
             }
         }
         assert!(saw_op, "expected approval decision to emit an op");
+    }
+
+    #[test]
+    fn shift_tab_enables_unrestricted_and_approves_current_request() {
+        let (tx, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx);
+        let mut view = ApprovalOverlay::new(make_exec_request(), tx, Features::with_defaults());
+
+        view.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+
+        assert!(view.is_complete(), "expected approval to complete");
+
+        let first = rx.try_recv().expect("expected mode switch event first");
+        assert_eq!(
+            matches!(
+                first,
+                AppEvent::SetCollaborationMode(ModeKind::Unrestricted)
+            ),
+            true
+        );
+
+        let mut saw_approval_op = false;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, AppEvent::SubmitThreadOp { .. }) {
+                saw_approval_op = true;
+                break;
+            }
+        }
+        assert!(saw_approval_op, "expected approval op after mode switch");
     }
 
     #[test]

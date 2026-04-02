@@ -222,7 +222,10 @@ async fn live_app_server_file_change_item_started_defers_history_until_completio
     );
 
     let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "expected completed patch history to be rendered");
+    assert!(
+        !cells.is_empty(),
+        "expected completed patch history to be rendered"
+    );
     let transcript = lines_to_single_string(cells.last().expect("patch cell"));
     assert!(
         transcript.contains("Added foo.txt") || transcript.contains("Edited foo.txt"),

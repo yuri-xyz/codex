@@ -126,7 +126,9 @@ async fn status_line_context_used_label_uses_context_word() {
 async fn status_line_context_used_turns_yellow_at_high_usage() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    chat.token_info = Some(make_token_info(/*total_tokens*/ 900, /*context_window*/ 1_000));
+    chat.token_info = Some(make_token_info(
+        /*total_tokens*/ 900, /*context_window*/ 1_000,
+    ));
 
     let span = chat
         .status_line_span_for_item(&crate::bottom_pane::StatusLineItem::ContextUsed)

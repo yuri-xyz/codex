@@ -168,9 +168,9 @@ use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::FileChange;
 #[cfg(test)]
 use codex_protocol::protocol::ExitedReviewModeEvent;
+use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
@@ -758,6 +758,7 @@ pub(crate) struct ChatWidget {
     current_collaboration_mode: CollaborationMode,
     /// The currently active collaboration mask, if any.
     active_collaboration_mask: Option<CollaborationModeMask>,
+    unrestricted_permissions_snapshot: Option<PermissionSnapshot>,
     has_chatgpt_account: bool,
     model_catalog: Arc<ModelCatalog>,
     session_telemetry: SessionTelemetry,
@@ -862,6 +863,8 @@ pub(crate) struct ChatWidget {
     suppress_initial_user_message_submit: bool,
     // User messages queued while a turn is in progress
     queued_user_messages: VecDeque<UserMessage>,
+    // Composer drafts saved with Meta+S for later reuse.
+    stashed_composer_drafts: VecDeque<ThreadComposerState>,
     // User messages that tried to steer a non-regular turn and must be retried first.
     rejected_steers_queue: VecDeque<UserMessage>,
     // Steers already submitted to core but not yet committed into history.
@@ -1047,10 +1050,18 @@ pub(crate) struct ThreadInputState {
     pending_steers: VecDeque<UserMessage>,
     rejected_steers_queue: VecDeque<UserMessage>,
     queued_user_messages: VecDeque<UserMessage>,
+    stashed_composer_drafts: VecDeque<ThreadComposerState>,
     current_collaboration_mode: CollaborationMode,
     active_collaboration_mask: Option<CollaborationModeMask>,
     task_running: bool,
     agent_turn_running: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PermissionSnapshot {
+    approval_policy: AskForApproval,
+    sandbox_policy: SandboxPolicy,
+    approvals_reviewer: ApprovalsReviewer,
 }
 
 impl From<String> for UserMessage {
@@ -2408,33 +2419,34 @@ impl ChatWidget {
         let default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
         let implementation_message =
             Self::build_plan_implementation_message(self.latest_completed_plan_text.as_deref());
-        let (implement_actions, fresh_context_actions, implement_disabled_reason) = match default_mask {
-            Some(mask) => {
-                let user_text = implementation_message.clone();
-                let implement_mask = mask.clone();
-                let implement_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SubmitUserMessageWithMode {
-                        text: user_text.clone(),
-                        collaboration_mode: implement_mask.clone(),
-                    });
-                })];
-                let fresh_context_user_text = implementation_message;
-                let fresh_context_mask = mask.clone();
-                let fresh_context_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::ClearUi);
-                    tx.send(AppEvent::SubmitUserMessageWithMode {
-                        text: fresh_context_user_text.clone(),
-                        collaboration_mode: fresh_context_mask.clone(),
-                    });
-                })];
-                (implement_actions, fresh_context_actions, None)
-            }
-            None => (
-                Vec::new(),
-                Vec::new(),
-                Some("Default mode unavailable".to_string()),
-            ),
-        };
+        let (implement_actions, fresh_context_actions, implement_disabled_reason) =
+            match default_mask {
+                Some(mask) => {
+                    let user_text = implementation_message.clone();
+                    let implement_mask = mask.clone();
+                    let implement_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                        tx.send(AppEvent::SubmitUserMessageWithMode {
+                            text: user_text.clone(),
+                            collaboration_mode: implement_mask.clone(),
+                        });
+                    })];
+                    let fresh_context_user_text = implementation_message;
+                    let fresh_context_mask = mask.clone();
+                    let fresh_context_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                        tx.send(AppEvent::ClearUi);
+                        tx.send(AppEvent::SubmitUserMessageWithMode {
+                            text: fresh_context_user_text.clone(),
+                            collaboration_mode: fresh_context_mask.clone(),
+                        });
+                    })];
+                    (implement_actions, fresh_context_actions, None)
+                }
+                None => (
+                    Vec::new(),
+                    Vec::new(),
+                    Some("Default mode unavailable".to_string()),
+                ),
+            };
         let items = vec![
             SelectionItem {
                 name: PLAN_IMPLEMENTATION_YES_FRESH_CONTEXT.to_string(),
@@ -2481,13 +2493,28 @@ impl ChatWidget {
         });
     }
 
-fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
-    let Some(plan_text) = plan_text.map(str::trim).filter(|plan_text| !plan_text.is_empty()) else {
-        return PLAN_IMPLEMENTATION_CODING_MESSAGE.to_string();
-    };
+    fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
+        let Some(plan_text) = plan_text
+            .map(str::trim)
+            .filter(|plan_text| !plan_text.is_empty())
+        else {
+            return PLAN_IMPLEMENTATION_CODING_MESSAGE.to_string();
+        };
 
-    format!("{plan_text}\n\n{PLAN_IMPLEMENTATION_CODING_MESSAGE}")
-}
+        format!("{plan_text}\n\n{PLAN_IMPLEMENTATION_CODING_MESSAGE}")
+    }
+
+    fn composer_preview_text(composer: &ThreadComposerState) -> String {
+        if !composer.text.trim().is_empty() {
+            composer.text.clone()
+        } else if !composer.local_images.is_empty() || !composer.remote_image_urls.is_empty() {
+            "[Draft with attachments]".to_string()
+        } else if !composer.pending_pastes.is_empty() {
+            "[Draft with pending pasted content]".to_string()
+        } else {
+            "[Draft]".to_string()
+        }
+    }
 
     fn has_queued_follow_up_messages(&self) -> bool {
         !self.rejected_steers_queue.is_empty() || !self.queued_user_messages.is_empty()
@@ -3154,15 +3181,71 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
         );
     }
 
-    pub(crate) fn capture_thread_input_state(&self) -> Option<ThreadInputState> {
-        let composer = ThreadComposerState {
+    fn current_composer_state(&self) -> ThreadComposerState {
+        ThreadComposerState {
             text: self.bottom_pane.composer_text(),
             text_elements: self.bottom_pane.composer_text_elements(),
             local_images: self.bottom_pane.composer_local_images(),
             remote_image_urls: self.bottom_pane.remote_image_urls(),
             mention_bindings: self.bottom_pane.composer_mention_bindings(),
             pending_pastes: self.bottom_pane.composer_pending_pastes(),
-        };
+        }
+    }
+
+    fn restore_composer_state(&mut self, composer: Option<ThreadComposerState>) {
+        if let Some(composer) = composer {
+            let local_image_paths = composer
+                .local_images
+                .into_iter()
+                .map(|img| img.path)
+                .collect();
+            self.set_remote_image_urls(composer.remote_image_urls);
+            self.bottom_pane.set_composer_text_with_mention_bindings(
+                composer.text,
+                composer.text_elements,
+                local_image_paths,
+                composer.mention_bindings,
+            );
+            self.bottom_pane
+                .set_composer_pending_pastes(composer.pending_pastes);
+        } else {
+            self.set_remote_image_urls(Vec::new());
+            self.bottom_pane.set_composer_text_with_mention_bindings(
+                String::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            self.bottom_pane.set_composer_pending_pastes(Vec::new());
+        }
+    }
+
+    fn stash_or_pop_composer_draft(&mut self) -> bool {
+        let composer = self.current_composer_state();
+        let composer_is_blank = composer.text.trim().is_empty()
+            && composer.local_images.is_empty()
+            && composer.remote_image_urls.is_empty()
+            && composer.text_elements.is_empty()
+            && composer.mention_bindings.is_empty()
+            && composer.pending_pastes.is_empty();
+
+        if composer_is_blank {
+            let Some(stashed) = self.stashed_composer_drafts.pop_back() else {
+                return false;
+            };
+            self.restore_composer_state(Some(stashed));
+        } else {
+            self.stashed_composer_drafts.push_back(composer);
+            self.restore_composer_state(None);
+        }
+
+        self.refresh_pending_input_preview();
+        self.request_redraw();
+        true
+    }
+
+    pub(crate) fn capture_thread_input_state(&self) -> Option<ThreadInputState> {
+        let composer = self.current_composer_state();
         Some(ThreadInputState {
             composer: composer.has_content().then_some(composer),
             pending_steers: self
@@ -3172,6 +3255,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                 .collect(),
             rejected_steers_queue: self.rejected_steers_queue.clone(),
             queued_user_messages: self.queued_user_messages.clone(),
+            stashed_composer_drafts: self.stashed_composer_drafts.clone(),
             current_collaboration_mode: self.current_collaboration_mode.clone(),
             active_collaboration_mask: self.active_collaboration_mask.clone(),
             task_running: self.bottom_pane.is_task_running(),
@@ -3181,39 +3265,27 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
 
     pub(crate) fn restore_thread_input_state(&mut self, input_state: Option<ThreadInputState>) {
         let restored_task_running = input_state.as_ref().is_some_and(|state| state.task_running);
+        let previous_mode = self.active_mode_kind();
         if let Some(input_state) = input_state {
-            self.current_collaboration_mode = input_state.current_collaboration_mode;
-            self.active_collaboration_mask = input_state.active_collaboration_mask;
-            self.agent_turn_running = input_state.agent_turn_running;
+            let ThreadInputState {
+                composer,
+                pending_steers,
+                rejected_steers_queue,
+                queued_user_messages,
+                stashed_composer_drafts,
+                current_collaboration_mode,
+                active_collaboration_mask,
+                task_running: _,
+                agent_turn_running,
+            } = input_state;
+            self.current_collaboration_mode = current_collaboration_mode;
+            self.active_collaboration_mask = active_collaboration_mask;
+            self.agent_turn_running = agent_turn_running;
+            self.sync_unrestricted_mode_permissions(previous_mode, self.active_mode_kind());
             self.update_collaboration_mode_indicator();
             self.refresh_model_dependent_surfaces();
-            if let Some(composer) = input_state.composer {
-                let local_image_paths = composer
-                    .local_images
-                    .into_iter()
-                    .map(|img| img.path)
-                    .collect();
-                self.set_remote_image_urls(composer.remote_image_urls);
-                self.bottom_pane.set_composer_text_with_mention_bindings(
-                    composer.text,
-                    composer.text_elements,
-                    local_image_paths,
-                    composer.mention_bindings,
-                );
-                self.bottom_pane
-                    .set_composer_pending_pastes(composer.pending_pastes);
-            } else {
-                self.set_remote_image_urls(Vec::new());
-                self.bottom_pane.set_composer_text_with_mention_bindings(
-                    String::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-                self.bottom_pane.set_composer_pending_pastes(Vec::new());
-            }
-            self.pending_steers = input_state
-                .pending_steers
+            self.restore_composer_state(composer);
+            self.pending_steers = pending_steers
                 .into_iter()
                 .map(|user_message| PendingSteer {
                     compare_key: PendingSteerCompareKey {
@@ -3224,21 +3296,16 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                     user_message,
                 })
                 .collect();
-            self.rejected_steers_queue = input_state.rejected_steers_queue;
-            self.queued_user_messages = input_state.queued_user_messages;
+            self.rejected_steers_queue = rejected_steers_queue;
+            self.queued_user_messages = queued_user_messages;
+            self.stashed_composer_drafts = stashed_composer_drafts;
         } else {
             self.agent_turn_running = false;
             self.pending_steers.clear();
             self.rejected_steers_queue.clear();
-            self.set_remote_image_urls(Vec::new());
-            self.bottom_pane.set_composer_text_with_mention_bindings(
-                String::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
-            self.bottom_pane.set_composer_pending_pastes(Vec::new());
             self.queued_user_messages.clear();
+            self.stashed_composer_drafts.clear();
+            self.restore_composer_state(None);
         }
         self.turn_sleep_inhibitor
             .set_turn_running(self.agent_turn_running);
@@ -4668,6 +4735,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
             skills_initial_state: None,
             current_collaboration_mode,
             active_collaboration_mask,
+            unrestricted_permissions_snapshot: None,
             has_chatgpt_account,
             model_catalog,
             session_telemetry,
@@ -4724,6 +4792,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
             thread_name: None,
             forked_from: None,
             queued_user_messages: VecDeque::new(),
+            stashed_composer_drafts: VecDeque::new(),
             rejected_steers_queue: VecDeque::new(),
             pending_steers: VecDeque::new(),
             submit_pending_steers_after_interrupt: false,
@@ -4860,6 +4929,19 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                 self.quit_shortcut_key = None;
             }
             _ => {}
+        }
+
+        if key_event.kind == KeyEventKind::Press
+            && matches!(key_event.code, KeyCode::Char('s') | KeyCode::Char('S'))
+            && key_event.modifiers.contains(KeyModifiers::SUPER)
+            && !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && self.bottom_pane.no_modal_or_popup_active()
+        {
+            if self.stash_or_pop_composer_draft() {
+                return;
+            }
         }
 
         if key_event.kind == KeyEventKind::Press
@@ -6081,7 +6163,10 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                 } else {
                     let core_changes = app_server_patch_changes_to_core(changes);
                     self.pending_app_server_file_changes.remove(&id);
-                    if matches!(status, codex_app_server_protocol::PatchApplyStatus::Completed) {
+                    if matches!(
+                        status,
+                        codex_app_server_protocol::PatchApplyStatus::Completed
+                    ) {
                         self.on_patch_apply_begin(codex_protocol::protocol::PatchApplyBeginEvent {
                             call_id: id.clone(),
                             turn_id: turn_id.clone(),
@@ -7239,10 +7324,16 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
             .iter()
             .map(|message| message.text.clone())
             .collect();
+        let stashed_messages: Vec<String> = self
+            .stashed_composer_drafts
+            .iter()
+            .map(Self::composer_preview_text)
+            .collect();
         self.bottom_pane.set_pending_input_preview(
             queued_messages,
             pending_steers,
             rejected_steers,
+            stashed_messages,
         );
     }
 
@@ -9330,6 +9421,67 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
         self.config.approvals_reviewer = policy;
     }
 
+    fn current_permission_snapshot(&self) -> PermissionSnapshot {
+        PermissionSnapshot {
+            approval_policy: self.config.permissions.approval_policy.value(),
+            sandbox_policy: self.config.permissions.sandbox_policy.get().clone(),
+            approvals_reviewer: self.config.approvals_reviewer,
+        }
+    }
+
+    fn apply_permission_snapshot(&mut self, snapshot: &PermissionSnapshot) {
+        self.app_event_tx.send(AppEvent::CodexOp(
+            AppCommand::override_turn_context(
+                /*cwd*/ None,
+                Some(snapshot.approval_policy),
+                Some(snapshot.approvals_reviewer),
+                Some(snapshot.sandbox_policy.clone()),
+                /*windows_sandbox_level*/ None,
+                /*model*/ None,
+                /*effort*/ None,
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )
+            .into_core(),
+        ));
+        self.app_event_tx.send(AppEvent::UpdateAskForApprovalPolicy(
+            snapshot.approval_policy,
+        ));
+        self.app_event_tx.send(AppEvent::UpdateSandboxPolicy(
+            snapshot.sandbox_policy.clone(),
+        ));
+        self.app_event_tx.send(AppEvent::UpdateApprovalsReviewer(
+            snapshot.approvals_reviewer,
+        ));
+        self.set_approval_policy(snapshot.approval_policy);
+        if let Err(err) = self.set_sandbox_policy(snapshot.sandbox_policy.clone()) {
+            tracing::warn!(%err, "failed to set sandbox_policy on chat config");
+        }
+        self.set_approvals_reviewer(snapshot.approvals_reviewer);
+    }
+
+    fn sync_unrestricted_mode_permissions(&mut self, previous_mode: ModeKind, next_mode: ModeKind) {
+        let entering_unrestricted =
+            previous_mode != ModeKind::Unrestricted && next_mode == ModeKind::Unrestricted;
+        let leaving_unrestricted =
+            previous_mode == ModeKind::Unrestricted && next_mode != ModeKind::Unrestricted;
+
+        if entering_unrestricted {
+            self.unrestricted_permissions_snapshot = Some(self.current_permission_snapshot());
+            self.apply_permission_snapshot(&PermissionSnapshot {
+                approval_policy: AskForApproval::Never,
+                sandbox_policy: SandboxPolicy::DangerFullAccess,
+                approvals_reviewer: ApprovalsReviewer::User,
+            });
+        } else if leaving_unrestricted
+            && let Some(snapshot) = self.unrestricted_permissions_snapshot.take()
+        {
+            self.apply_permission_snapshot(&snapshot);
+        }
+    }
+
     pub(crate) fn set_full_access_warning_acknowledged(&mut self, acknowledged: bool) {
         self.config.notices.hide_full_access_warning = Some(acknowledged);
     }
@@ -9696,6 +9848,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
         }
         match self.active_mode_kind() {
             ModeKind::Build => Some(CollaborationModeIndicator::Build),
+            ModeKind::Unrestricted => Some(CollaborationModeIndicator::Unrestricted),
             ModeKind::Plan => Some(CollaborationModeIndicator::Plan),
             ModeKind::Default | ModeKind::PairProgramming | ModeKind::Execute => None,
         }
@@ -9736,6 +9889,16 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
         }
     }
 
+    pub(crate) fn set_collaboration_mode_kind(&mut self, kind: ModeKind) {
+        if !self.collaboration_modes_enabled() {
+            return;
+        }
+
+        if let Some(mask) = collaboration_modes::mask_for_kind(self.model_catalog.as_ref(), kind) {
+            self.set_collaboration_mask(mask);
+        }
+    }
+
     /// Update the active collaboration mask.
     ///
     /// When collaboration modes are enabled and a preset is selected,
@@ -9753,6 +9916,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
             mask.reasoning_effort = Some(Some(effort));
         }
         self.active_collaboration_mask = Some(mask);
+        self.sync_unrestricted_mode_permissions(previous_mode, self.active_mode_kind());
         self.update_collaboration_mode_indicator();
         self.refresh_model_dependent_surfaces();
         let next_mode = self.active_mode_kind();
@@ -10352,6 +10516,14 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                     .iter()
                     .map(|message| message.text.clone()),
             )
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stashed_draft_texts(&self) -> Vec<String> {
+        self.stashed_composer_drafts
+            .iter()
+            .map(Self::composer_preview_text)
             .collect()
     }
 

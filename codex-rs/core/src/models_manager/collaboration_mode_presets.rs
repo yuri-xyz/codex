@@ -6,8 +6,9 @@ use codex_utils_template::Template;
 use std::sync::LazyLock;
 
 const COLLABORATION_MODE_PLAN: &str = include_str!("../../templates/collaboration_mode/plan.md");
-const COLLABORATION_MODE_BUILD: &str =
-    include_str!("../../templates/collaboration_mode/build.md");
+const COLLABORATION_MODE_BUILD: &str = include_str!("../../templates/collaboration_mode/build.md");
+const COLLABORATION_MODE_UNRESTRICTED: &str =
+    include_str!("../../templates/collaboration_mode/unrestricted.md");
 const COLLABORATION_MODE_DEFAULT: &str =
     include_str!("../../templates/collaboration_mode/default.md");
 const KNOWN_MODE_NAMES_TEMPLATE_KEY: &str = "KNOWN_MODE_NAMES";
@@ -43,6 +44,7 @@ pub fn builtin_collaboration_mode_presets(
     vec![
         default_preset(collaboration_modes_config),
         build_preset(),
+        unrestricted_preset(),
         plan_preset(),
     ]
 }
@@ -64,6 +66,16 @@ fn build_preset() -> CollaborationModeMask {
         model: None,
         reasoning_effort: None,
         developer_instructions: Some(Some(COLLABORATION_MODE_BUILD.to_string())),
+    }
+}
+
+fn unrestricted_preset() -> CollaborationModeMask {
+    CollaborationModeMask {
+        name: ModeKind::Unrestricted.display_name().to_string(),
+        mode: Some(ModeKind::Unrestricted),
+        model: None,
+        reasoning_effort: None,
+        developer_instructions: Some(Some(COLLABORATION_MODE_UNRESTRICTED.to_string())),
     }
 }
 

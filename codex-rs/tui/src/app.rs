@@ -4946,6 +4946,9 @@ impl App {
             AppEvent::RestartRealtimeAudioDevice { kind } => {
                 self.chat_widget.restart_realtime_audio_device(kind);
             }
+            AppEvent::SetCollaborationMode(mode) => {
+                self.chat_widget.set_collaboration_mode_kind(mode);
+            }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 let mut config = self.config.clone();
                 if !self.try_set_approval_policy_on_config(

@@ -21,8 +21,7 @@ async fn plan_implementation_popup_no_selected_snapshot() {
 }
 
 #[tokio::test]
-async fn plan_implementation_popup_yes_fresh_context_emits_clear_ui_then_submit_message_events()
-{
+async fn plan_implementation_popup_yes_fresh_context_emits_clear_ui_then_submit_message_events() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.on_plan_item_completed("# Proposed Plan\n\nDo the thing.".to_string());
     let _ = drain_insert_history(&mut rx);
@@ -1058,6 +1057,13 @@ async fn collab_mode_shift_tab_cycles_only_when_idle() {
     assert_eq!(chat.current_collaboration_mode(), &initial);
 
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(
+        chat.active_collaboration_mode_kind(),
+        ModeKind::Unrestricted
+    );
+    assert_eq!(chat.current_collaboration_mode(), &initial);
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert_eq!(chat.current_collaboration_mode(), &initial);
 
@@ -1069,6 +1075,44 @@ async fn collab_mode_shift_tab_cycles_only_when_idle() {
     let before = chat.active_collaboration_mode_kind();
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert_eq!(chat.active_collaboration_mode_kind(), before);
+}
+
+#[tokio::test]
+async fn unrestricted_mode_applies_and_restores_full_access_permissions() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateAskForApprovalPolicy(AskForApproval::Never)
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateSandboxPolicy(SandboxPolicy::DangerFullAccess)
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateApprovalsReviewer(ApprovalsReviewer::User)
+    )));
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+
+    let restore_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(restore_events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateAskForApprovalPolicy(AskForApproval::OnRequest)
+    )));
+    assert!(restore_events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateSandboxPolicy(policy) if *policy == SandboxPolicy::new_workspace_write_policy()
+    )));
+    assert!(restore_events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateApprovalsReviewer(ApprovalsReviewer::User)
+    )));
 }
 
 #[tokio::test]

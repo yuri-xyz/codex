@@ -38,3 +38,6 @@ git log --author="yuri-xyz" --oneline
 - Disabled all GitHub Actions in this fork by moving workflow YAML files out of `.github/workflows`, so GitHub no longer discovers or runs the upstream CI/release/automation workflows here.
 - Added embedded Funktion syntax highlighting for `.fun` files in the TUI so Funktion diffs, approval previews, and fenced code blocks render with language-aware coloring.
 - Hid `/plan` from the visible slash-command list and prefix suggestions while keeping direct typed `/plan` usage available for users who already know the shortcut.
+- Added an `Unrestricted` collaboration mode to the Shift+Tab mode cycle that temporarily applies Full Access behavior without approval prompts, then restores the prior permission settings when you leave the mode.
+- Made `Shift+Tab` inside approval confirmations auto-approve the current request and immediately switch the session into `Unrestricted` mode so the rest of the request, and later requests, keep running without prompts until you cycle modes again.
+- Added a `Meta+S` composer stash flow: with a non-empty draft it stashes the current prompt into a new stash group above the input, and with a blank composer it pops the most recently stashed draft back into the composer.

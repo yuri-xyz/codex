@@ -34,6 +34,7 @@ use crate::history_cell::HistoryCell;
 use codex_config::types::ApprovalsReviewer;
 use codex_features::Feature;
 use codex_protocol::config_types::CollaborationModeMask;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -101,6 +102,9 @@ pub(crate) enum AppEvent {
     /// Clear the terminal UI (screen + scrollback), start a fresh session, and keep the
     /// previous chat resumable.
     ClearUi,
+
+    /// Switch the active collaboration mode preset.
+    SetCollaborationMode(ModeKind),
 
     /// Open the resume picker inside the running TUI session.
     OpenResumePicker,

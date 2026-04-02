@@ -795,6 +795,7 @@ async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
         pending_steers: VecDeque::new(),
         rejected_steers_queue: VecDeque::new(),
         queued_user_messages: VecDeque::new(),
+        stashed_composer_drafts: VecDeque::new(),
         current_collaboration_mode: chat.current_collaboration_mode.clone(),
         active_collaboration_mask: chat.active_collaboration_mask.clone(),
         task_running: true,
@@ -855,6 +856,40 @@ async fn shift_left_edits_most_recent_queued_message_in_apple_terminal() {
         multiplexer: None,
     })
     .await;
+}
+
+#[tokio::test]
+async fn meta_s_stashes_current_composer_draft() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane
+        .set_composer_text("stashed prompt".to_string(), Vec::new(), Vec::new());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
+
+    assert_eq!(chat.bottom_pane.composer_text(), "");
+    assert_eq!(
+        chat.stashed_draft_texts(),
+        vec!["stashed prompt".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn meta_s_restores_last_stashed_draft_when_composer_is_blank() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane
+        .set_composer_text("first stashed prompt".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
+    chat.bottom_pane
+        .set_composer_text("second stashed prompt".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
+
+    assert_eq!(chat.bottom_pane.composer_text(), "second stashed prompt");
+    assert_eq!(
+        chat.stashed_draft_texts(),
+        vec!["first stashed prompt".to_string()]
+    );
 }
 
 #[tokio::test]
