@@ -91,11 +91,10 @@ pub(crate) use list_selection_view::SelectionViewParams;
 pub(crate) use list_selection_view::SideContentWidth;
 pub(crate) use list_selection_view::popup_content_width;
 pub(crate) use list_selection_view::side_by_side_layout_widths;
+#[allow(dead_code)]
 mod feedback_view;
 pub(crate) use feedback_view::FeedbackAudience;
 pub(crate) use feedback_view::feedback_classification;
-pub(crate) use feedback_view::feedback_disabled_params;
-pub(crate) use feedback_view::feedback_selection_params;
 pub(crate) use feedback_view::feedback_success_cell;
 pub(crate) use feedback_view::feedback_upload_consent_params;
 pub(crate) use skills_toggle_view::SkillsToggleItem;
@@ -264,11 +263,6 @@ impl BottomPane {
 
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
         self.composer.set_plugin_mentions(plugins);
-        self.request_redraw();
-    }
-
-    pub fn set_plugins_command_enabled(&mut self, enabled: bool) {
-        self.composer.set_plugins_command_enabled(enabled);
         self.request_redraw();
     }
 

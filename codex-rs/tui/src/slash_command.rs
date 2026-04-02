@@ -33,7 +33,6 @@ pub enum SlashCommand {
     Collab,
     Agent,
     // Undo,
-    Diff,
     Copy,
     Mention,
     Status,
@@ -43,11 +42,9 @@ pub enum SlashCommand {
     Theme,
     Mcp,
     Apps,
-    Plugins,
     Logout,
     Quit,
     Exit,
-    Feedback,
     Rollout,
     Ps,
     #[strum(to_string = "stop", serialize = "clean")]
@@ -70,7 +67,6 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
-            SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
@@ -81,7 +77,6 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
-            SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Copy => "copy the latest Codex output to your clipboard",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
@@ -111,7 +106,6 @@ impl SlashCommand {
             SlashCommand::Experimental => "toggle experimental features",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Apps => "manage apps",
-            SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
@@ -159,8 +153,7 @@ impl SlashCommand {
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
-            SlashCommand::Diff
-            | SlashCommand::Copy
+            SlashCommand::Copy
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills
@@ -170,8 +163,6 @@ impl SlashCommand {
             | SlashCommand::Stop
             | SlashCommand::Mcp
             | SlashCommand::Apps
-            | SlashCommand::Plugins
-            | SlashCommand::Feedback
             | SlashCommand::Quit
             | SlashCommand::Exit => true,
             SlashCommand::Rollout => true,

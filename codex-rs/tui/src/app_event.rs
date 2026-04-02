@@ -154,9 +154,6 @@ pub(crate) enum AppEvent {
         is_final: bool,
     },
 
-    /// Result of computing a `/diff` command.
-    DiffResult(String),
-
     /// Open the app link view in the bottom pane.
     OpenAppLink {
         app_id: String,
@@ -179,6 +176,7 @@ pub(crate) enum AppEvent {
     },
 
     /// Fetch plugin marketplace state for the provided working directory.
+    #[allow(dead_code)]
     FetchPluginsList {
         cwd: PathBuf,
     },
@@ -518,6 +516,7 @@ pub(crate) enum AppEvent {
     },
 
     /// Open the upload consent popup for feedback after selecting a category.
+    #[allow(dead_code)]
     OpenFeedbackConsent {
         category: FeedbackCategory,
     },
@@ -585,6 +584,7 @@ pub(crate) enum ExitMode {
     Immediate,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FeedbackCategory {
     BadResult,

@@ -119,6 +119,7 @@ impl Renderable for PluginDisclosureLine {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(super) enum PluginsCacheState {
     #[default]
@@ -129,6 +130,7 @@ pub(super) enum PluginsCacheState {
 }
 
 impl ChatWidget {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_plugins_output(&mut self) {
         if !self.config.features.enabled(Feature::Plugins) {
             self.add_info_message(
@@ -190,6 +192,7 @@ impl ChatWidget {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn prefetch_plugins(&mut self) {
         let cwd = self.config.cwd.to_path_buf();
         if self.plugins_fetch_state.in_flight_cwd.as_deref() == Some(cwd.as_path()) {
@@ -212,6 +215,7 @@ impl ChatWidget {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn open_plugins_loading_popup(&mut self) {
         if !self.bottom_pane.replace_selection_view_if_active(
             PLUGINS_SELECTION_VIEW_ID,
@@ -222,6 +226,7 @@ impl ChatWidget {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn open_plugins_popup(&mut self, response: &PluginListResponse) {
         self.bottom_pane
             .show_selection_view(self.plugins_popup_params(response));
@@ -558,6 +563,7 @@ impl ChatWidget {
         );
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn plugins_loading_popup_params(&self) -> SelectionViewParams {
         SelectionViewParams {
             view_id: Some(PLUGINS_SELECTION_VIEW_ID),

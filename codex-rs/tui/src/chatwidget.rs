@@ -323,7 +323,6 @@ use crate::exec_cell::ExecCell;
 use crate::exec_cell::new_active_exec_command;
 use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
-use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 #[cfg(test)]
 use crate::history_cell::AgentMessageCell;
@@ -1999,7 +1998,6 @@ impl ChatWidget {
         self.refresh_status_surfaces();
         self.sync_fast_command_enabled();
         self.sync_personality_command_enabled();
-        self.sync_plugins_command_enabled();
         self.refresh_plugin_mentions();
         let startup_tooltip_override = self.startup_tooltip_override.take();
         let show_fast_status = self.should_show_fast_status(&model_for_header, event.service_tier);
@@ -3044,7 +3042,8 @@ impl ChatWidget {
                 ));
             } else {
                 self.add_to_history(history_cell::new_error_event(
-                    "Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.".to_owned(),
+                    "Conversation interrupted. Tell the model what to do differently and try again."
+                        .to_owned(),
                 ));
             }
         }
@@ -4745,7 +4744,6 @@ impl ChatWidget {
             .set_collaboration_modes_enabled(/*enabled*/ true);
         widget.sync_fast_command_enabled();
         widget.sync_personality_command_enabled();
-        widget.sync_plugins_command_enabled();
         widget
             .bottom_pane
             .set_queued_message_edit_binding(widget.queued_message_edit_binding);
@@ -5015,19 +5013,6 @@ impl ChatWidget {
             return;
         }
         match cmd {
-            SlashCommand::Feedback => {
-                if !self.config.feedback_enabled {
-                    let params = crate::bottom_pane::feedback_disabled_params();
-                    self.bottom_pane.show_selection_view(params);
-                    self.request_redraw();
-                    return;
-                }
-                // Step 1: pick a category (UI built in feedback_view)
-                let params =
-                    crate::bottom_pane::feedback_selection_params(self.app_event_tx.clone());
-                self.bottom_pane.show_selection_view(params);
-                self.request_redraw();
-            }
             SlashCommand::New => {
                 self.app_event_tx.send(AppEvent::NewSession);
             }
@@ -5214,23 +5199,6 @@ impl ChatWidget {
             // SlashCommand::Undo => {
             //     self.app_event_tx.send(AppEvent::CodexOp(Op::Undo));
             // }
-            SlashCommand::Diff => {
-                self.add_diff_in_progress();
-                let tx = self.app_event_tx.clone();
-                tokio::spawn(async move {
-                    let text = match get_git_diff().await {
-                        Ok((is_git_repo, diff_text)) => {
-                            if is_git_repo {
-                                diff_text
-                            } else {
-                                "`/diff` — _not inside a git repository_".to_string()
-                            }
-                        }
-                        Err(e) => format!("Failed to compute diff: {e}"),
-                    };
-                    tx.send(AppEvent::DiffResult(text));
-                });
-            }
             SlashCommand::Copy => {
                 let Some(text) = self.last_copyable_output.as_deref() else {
                     self.add_info_message(
@@ -5308,9 +5276,6 @@ impl ChatWidget {
             }
             SlashCommand::Apps => {
                 self.add_connectors_output();
-            }
-            SlashCommand::Plugins => {
-                self.add_plugins_output();
             }
             SlashCommand::Rollout => {
                 if let Some(path) = self.rollout_path() {
@@ -7283,14 +7248,6 @@ impl ChatWidget {
 
     pub(crate) fn set_pending_thread_approvals(&mut self, threads: Vec<String>) {
         self.bottom_pane.set_pending_thread_approvals(threads);
-    }
-
-    pub(crate) fn add_diff_in_progress(&mut self) {
-        self.request_redraw();
-    }
-
-    pub(crate) fn on_diff_complete(&mut self) {
-        self.request_redraw();
     }
 
     pub(crate) fn add_status_output(
@@ -9346,7 +9303,6 @@ impl ChatWidget {
             self.sync_personality_command_enabled();
         }
         if feature == Feature::Plugins {
-            self.sync_plugins_command_enabled();
             self.refresh_plugin_mentions();
         }
         if feature == Feature::PreventIdleSleep {
@@ -9585,11 +9541,6 @@ impl ChatWidget {
     fn sync_personality_command_enabled(&mut self) {
         self.bottom_pane
             .set_personality_command_enabled(self.config.features.enabled(Feature::Personality));
-    }
-
-    fn sync_plugins_command_enabled(&mut self) {
-        self.bottom_pane
-            .set_plugins_command_enabled(self.config.features.enabled(Feature::Plugins));
     }
 
     fn current_model_supports_personality(&self) -> bool {

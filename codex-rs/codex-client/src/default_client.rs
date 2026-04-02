@@ -2,16 +2,12 @@ use http::Error as HttpError;
 use http::HeaderMap;
 use http::HeaderName;
 use http::HeaderValue;
-use opentelemetry::global;
-use opentelemetry::propagation::Injector;
 use reqwest::IntoUrl;
 use reqwest::Method;
 use reqwest::Response;
 use serde::Serialize;
 use std::fmt::Display;
 use std::time::Duration;
-use tracing::Span;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Clone, Debug)]
 pub struct CodexHttpClient {
@@ -141,28 +137,8 @@ impl CodexRequestBuilder {
     }
 }
 
-struct HeaderMapInjector<'a>(&'a mut HeaderMap);
-
-impl<'a> Injector for HeaderMapInjector<'a> {
-    fn set(&mut self, key: &str, value: String) {
-        if let (Ok(name), Ok(val)) = (
-            HeaderName::from_bytes(key.as_bytes()),
-            HeaderValue::from_str(&value),
-        ) {
-            self.0.insert(name, val);
-        }
-    }
-}
-
 fn trace_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    global::get_text_map_propagator(|prop| {
-        prop.inject_context(
-            &Span::current().context(),
-            &mut HeaderMapInjector(&mut headers),
-        );
-    });
-    headers
+    HeaderMap::new()
 }
 
 #[cfg(test)]

@@ -64,7 +64,7 @@ pub enum SandboxErr {
 
 #[derive(Error, Debug)]
 pub enum CodexErr {
-    #[error("turn aborted. Something went wrong? Hit `/feedback` to report the issue.")]
+    #[error("turn aborted")]
     TurnAborted,
 
     /// Returned by ResponsesClient when the SSE stream disconnects or errors out **after** the HTTP
@@ -101,7 +101,7 @@ pub enum CodexErr {
 
     /// Returned by run_command_stream when the user pressed Ctrl‑C (SIGINT). Session uses this to
     /// surface a polite FunctionCallOutput back to the model instead of crashing the CLI.
-    #[error("interrupted (Ctrl-C). Something went wrong? Hit `/feedback` to report the issue.")]
+    #[error("interrupted (Ctrl-C)")]
     Interrupted,
 
     /// Unexpected HTTP status code.

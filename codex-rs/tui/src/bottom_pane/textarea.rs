@@ -1781,7 +1781,7 @@ mod tests {
         t.kill_to_end_of_line();
         assert!(t.text().is_empty());
 
-        t.set_text_clearing_elements("/diff");
+        t.set_text_clearing_elements("/copy");
         t.set_text_clearing_elements("");
         t.yank();
 

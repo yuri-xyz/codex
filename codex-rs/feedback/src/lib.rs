@@ -1,34 +1,26 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::collections::btree_map::Entry;
 use std::fs;
 use std::io::Write;
 use std::io::{self};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use anyhow::Result;
-use anyhow::anyhow;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
-use feedback_diagnostics::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
 use feedback_diagnostics::FeedbackDiagnostics;
 use tracing::Event;
-use tracing::Level;
 use tracing::field::Visit;
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::Targets;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::registry::LookupSpan;
 
 pub mod feedback_diagnostics;
 
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
-const SENTRY_DSN: &str =
-    "https://ae32ed50620d7a7792c1ce5df38b3e3e@o33249.ingest.us.sentry.io/4510195390611458";
-const UPLOAD_TIMEOUT_SECS: u64 = 10;
 const FEEDBACK_TAGS_TARGET: &str = "feedback_tags";
 const MAX_FEEDBACK_TAGS: usize = 64;
 
@@ -74,9 +66,7 @@ impl CodexFeedback {
             .with_timer(tracing_subscriber::fmt::time::SystemTime)
             .with_ansi(false)
             .with_target(false)
-            // Capture everything, regardless of the caller's `RUST_LOG`, so feedback includes the
-            // full trace when the user uploads a report.
-            .with_filter(Targets::new().with_default(Level::TRACE))
+            .with_filter(LevelFilter::OFF)
     }
 
     /// Returns a [`tracing_subscriber`] layer that collects structured metadata for feedback.
@@ -90,7 +80,7 @@ impl CodexFeedback {
         FeedbackMetadataLayer {
             inner: self.inner.clone(),
         }
-        .with_filter(Targets::new().with_target(FEEDBACK_TAGS_TARGET, Level::TRACE))
+        .with_filter(LevelFilter::OFF)
     }
 
     pub fn snapshot(&self, session_id: Option<ThreadId>) -> FeedbackSnapshot {
@@ -106,7 +96,7 @@ impl CodexFeedback {
         };
         FeedbackSnapshot {
             bytes,
-            tags,
+            _tags: tags,
             feedback_diagnostics: FeedbackDiagnostics::collect_from_env(),
             thread_id: session_id
                 .map(|id| id.to_string())
@@ -209,7 +199,7 @@ impl RingBuffer {
 
 pub struct FeedbackSnapshot {
     bytes: Vec<u8>,
-    tags: BTreeMap<String, String>,
+    _tags: BTreeMap<String, String>,
     feedback_diagnostics: FeedbackDiagnostics,
     pub thread_id: String,
 }
@@ -244,169 +234,18 @@ impl FeedbackSnapshot {
         Ok(path)
     }
 
-    /// Upload feedback to Sentry with optional attachments.
+    /// Feedback uploads are disabled in telemetry-free builds.
     pub fn upload_feedback(
         &self,
-        classification: &str,
-        reason: Option<&str>,
-        include_logs: bool,
-        extra_attachment_paths: &[PathBuf],
-        session_source: Option<SessionSource>,
-        logs_override: Option<Vec<u8>>,
+        _classification: &str,
+        _reason: Option<&str>,
+        _include_logs: bool,
+        _extra_attachment_paths: &[PathBuf],
+        _session_source: Option<SessionSource>,
+        _logs_override: Option<Vec<u8>>,
     ) -> Result<()> {
-        use std::collections::BTreeMap;
-        use std::str::FromStr;
-        use std::sync::Arc;
-
-        use sentry::Client;
-        use sentry::ClientOptions;
-        use sentry::protocol::Envelope;
-        use sentry::protocol::EnvelopeItem;
-        use sentry::protocol::Event;
-        use sentry::protocol::Level;
-        use sentry::transports::DefaultTransportFactory;
-        use sentry::types::Dsn;
-
-        // Build Sentry client
-        let client = Client::from_config(ClientOptions {
-            dsn: Some(Dsn::from_str(SENTRY_DSN).map_err(|e| anyhow!("invalid DSN: {e}"))?),
-            transport: Some(Arc::new(DefaultTransportFactory {})),
-            ..Default::default()
-        });
-
-        let cli_version = env!("CARGO_PKG_VERSION");
-        let mut tags = BTreeMap::from([
-            (String::from("thread_id"), self.thread_id.to_string()),
-            (String::from("classification"), classification.to_string()),
-            (String::from("cli_version"), cli_version.to_string()),
-        ]);
-        if let Some(source) = session_source.as_ref() {
-            tags.insert(String::from("session_source"), source.to_string());
-        }
-        if let Some(r) = reason {
-            tags.insert(String::from("reason"), r.to_string());
-        }
-
-        let reserved = [
-            "thread_id",
-            "classification",
-            "cli_version",
-            "session_source",
-            "reason",
-        ];
-        for (key, value) in &self.tags {
-            if reserved.contains(&key.as_str()) {
-                continue;
-            }
-            if let Entry::Vacant(entry) = tags.entry(key.clone()) {
-                entry.insert(value.clone());
-            }
-        }
-
-        let level = match classification {
-            "bug" | "bad_result" | "safety_check" => Level::Error,
-            _ => Level::Info,
-        };
-
-        let mut envelope = Envelope::new();
-        let title = format!(
-            "[{}]: Codex session {}",
-            display_classification(classification),
-            self.thread_id
-        );
-
-        let mut event = Event {
-            level,
-            message: Some(title.clone()),
-            tags,
-            ..Default::default()
-        };
-        if let Some(r) = reason {
-            use sentry::protocol::Exception;
-            use sentry::protocol::Values;
-
-            event.exception = Values::from(vec![Exception {
-                ty: title,
-                value: Some(r.to_string()),
-                ..Default::default()
-            }]);
-        }
-        envelope.add_item(EnvelopeItem::Event(event));
-
-        for attachment in
-            self.feedback_attachments(include_logs, extra_attachment_paths, logs_override)
-        {
-            envelope.add_item(EnvelopeItem::Attachment(attachment));
-        }
-
-        client.send_envelope(envelope);
-        client.flush(Some(Duration::from_secs(UPLOAD_TIMEOUT_SECS)));
+        tracing::info!("feedback upload skipped: telemetry-disabled build");
         Ok(())
-    }
-
-    fn feedback_attachments(
-        &self,
-        include_logs: bool,
-        extra_attachment_paths: &[PathBuf],
-        logs_override: Option<Vec<u8>>,
-    ) -> Vec<sentry::protocol::Attachment> {
-        use sentry::protocol::Attachment;
-
-        let mut attachments = Vec::new();
-
-        if include_logs {
-            attachments.push(Attachment {
-                buffer: logs_override.unwrap_or_else(|| self.bytes.clone()),
-                filename: String::from("codex-logs.log"),
-                content_type: Some("text/plain".to_string()),
-                ty: None,
-            });
-        }
-
-        if let Some(text) = self.feedback_diagnostics_attachment_text(include_logs) {
-            attachments.push(Attachment {
-                buffer: text.into_bytes(),
-                filename: FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME.to_string(),
-                content_type: Some("text/plain".to_string()),
-                ty: None,
-            });
-        }
-
-        for path in extra_attachment_paths {
-            let data = match fs::read(path) {
-                Ok(data) => data,
-                Err(err) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %err,
-                        "failed to read log attachment; skipping"
-                    );
-                    continue;
-                }
-            };
-            let filename = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "extra-log.log".to_string());
-            attachments.push(Attachment {
-                buffer: data,
-                filename,
-                content_type: Some("text/plain".to_string()),
-                ty: None,
-            });
-        }
-
-        attachments
-    }
-}
-
-fn display_classification(classification: &str) -> String {
-    match classification {
-        "bug" => "Bug".to_string(),
-        "bad_result" => "Bad result".to_string(),
-        "good_result" => "Good result".to_string(),
-        "safety_check" => "Safety check".to_string(),
-        _ => "Other".to_string(),
     }
 }
 
