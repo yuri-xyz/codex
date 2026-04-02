@@ -1,0 +1,126 @@
+%YAML 1.2
+---
+name: Funktion
+file_extensions:
+  - fun
+scope: source.funktion
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: attributes
+    - include: declarations
+    - include: keywords
+    - include: operators
+    - include: constructors
+    - include: types
+    - include: function-calls
+
+  comments:
+    - match: '--.*$'
+      scope: comment.line.double-dash.funktion
+    - match: '\{-'
+      push: block-comment
+
+  block-comment:
+    - meta_scope: comment.block.funktion
+    - match: '\{-'
+      push: block-comment
+    - match: '-\}'
+      pop: true
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.funktion
+      push: double-quoted-string
+    - match: '`'
+      scope: punctuation.definition.string.begin.funktion
+      push: template-string
+
+  double-quoted-string:
+    - meta_scope: string.quoted.double.funktion
+    - match: '\\.'
+      scope: constant.character.escape.funktion
+    - match: '"'
+      scope: punctuation.definition.string.end.funktion
+      pop: true
+
+  template-string:
+    - meta_scope: string.template.funktion
+    - match: '\\.'
+      scope: constant.character.escape.funktion
+    - match: '\$\{'
+      scope: punctuation.section.embedded.begin.funktion
+      push: template-interpolation
+    - match: '`'
+      scope: punctuation.definition.string.end.funktion
+      pop: true
+
+  template-interpolation:
+    - meta_scope: meta.embedded.expression.funktion
+    - include: main
+    - match: '\}'
+      scope: punctuation.section.embedded.end.funktion
+      pop: true
+
+  numbers:
+    - match: '\b\d+\.\d+([eE][+-]?\d+)?\b'
+      scope: constant.numeric.float.funktion
+    - match: '\b\d+\b'
+      scope: constant.numeric.integer.funktion
+
+  attributes:
+    - match: '@[a-z_][a-zA-Z0-9_]*'
+      scope: entity.other.attribute-name.funktion
+
+  declarations:
+    - match: '\b(fun)\s+([a-z_][a-zA-Z0-9_]*)'
+      captures:
+        1: keyword.declaration.funktion
+        2: entity.name.function.funktion
+    - match: '\b(type|effect|effects|class|instance|let|external|opaque)\b'
+      scope: keyword.declaration.funktion
+
+  keywords:
+    - match: '\b(if|then|else|elif|match|with|try|do|from|import|as|in|pure|deriving|validate)\b'
+      scope: keyword.control.funktion
+    - match: '\b(and|or)\b'
+      scope: keyword.operator.logical.funktion
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.funktion
+    - match: '\b(jsx|json)\b(?=\s*`)'
+      scope: support.function.builtin.funktion
+
+  operators:
+    - match: '->|=>'
+      scope: keyword.operator.arrow.funktion
+    - match: ':=|='
+      scope: keyword.operator.assignment.funktion
+    - match: '==|!=|<=|>=|<|>'
+      scope: keyword.operator.comparison.funktion
+    - match: '\|\>'
+      scope: keyword.operator.pipe.funktion
+    - match: '\+\+|\+|-|\*|/|%'
+      scope: keyword.operator.arithmetic.funktion
+    - match: '\|\||<-|\.\.|!'
+      scope: keyword.operator.other.funktion
+
+  constructors:
+    - match: '(\|)\s*([A-Z][a-zA-Z0-9_]*)'
+      captures:
+        1: punctuation.separator.constructor.funktion
+        2: entity.name.tag.constructor.funktion
+
+  types:
+    - match: '\b(Int|Float|String|Bool|Unit|List|Option|Result|Element)\b'
+      scope: support.type.primitive.funktion
+    - match: '\b(IO|Async|Error)\b'
+      scope: support.type.effect.funktion
+    - match: '\b[A-Z][a-zA-Z0-9_]*\b'
+      scope: entity.name.type.funktion
+
+  function-calls:
+    - match: '\b[a-z_][a-zA-Z0-9_]*(?=\s*\()'
+      scope: variable.function.funktion

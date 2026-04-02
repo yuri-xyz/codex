@@ -394,11 +394,8 @@ fn render_diff_summary_lines(
         out.push("".into());
 
         let lang = detect_lang_for_path(row.move_path.as_deref().unwrap_or(&row.path));
-        let diff_lines = render_single_change_lines(
-            &row.change,
-            wrap_cols.saturating_sub(2),
-            lang.as_deref(),
-        );
+        let diff_lines =
+            render_single_change_lines(&row.change, wrap_cols.saturating_sub(2), lang.as_deref());
         out.extend(prefix_lines(diff_lines, "  ".into(), "  ".into()));
         if out.len() > MAX_DIFF_PREVIEW_LINES {
             break;
@@ -2296,6 +2293,7 @@ mod tests {
         assert!(detect_lang_for_path(Path::new("foo.rs")).is_some());
         assert!(detect_lang_for_path(Path::new("bar.py")).is_some());
         assert!(detect_lang_for_path(Path::new("app.tsx")).is_some());
+        assert!(detect_lang_for_path(Path::new("Main.fun")).is_some());
 
         // Extensionless files return None.
         assert!(detect_lang_for_path(Path::new("Makefile")).is_none());
@@ -2356,8 +2354,7 @@ mod tests {
             },
         );
 
-        let renderable: Box<dyn Renderable> =
-            DiffSummary::new(changes, PathBuf::from("/")).into();
+        let renderable: Box<dyn Renderable> = DiffSummary::new(changes, PathBuf::from("/")).into();
         let area = Rect::new(0, 0, 80, renderable.desired_height(80));
         let mut buf = Buffer::empty(area);
         renderable.render(area, &mut buf);

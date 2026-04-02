@@ -38,6 +38,7 @@ use syntect::highlighting::Style as SyntectStyle;
 use syntect::highlighting::Theme;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::Scope;
+use syntect::parsing::SyntaxDefinition;
 use syntect::parsing::SyntaxReference;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
@@ -49,6 +50,7 @@ static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME: OnceLock<RwLock<Theme>> = OnceLock::new();
 static THEME_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
 static CODEX_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
+const FUNKTION_SYNTAX: &str = include_str!("../syntaxes/Funktion.sublime-syntax");
 
 // Syntect/bat encode ANSI palette semantics in alpha:
 // `a=0` => indexed ANSI palette via RGB payload, `a=1` => terminal default.
@@ -57,7 +59,28 @@ const ANSI_ALPHA_DEFAULT: u8 = 0x01;
 const OPAQUE_ALPHA: u8 = 0xFF;
 
 fn syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines)
+    SYNTAX_SET.get_or_init(build_syntax_set)
+}
+
+fn build_syntax_set() -> SyntaxSet {
+    let mut builder = two_face::syntax::extra_newlines().clone().into_builder();
+    add_embedded_syntax(&mut builder, FUNKTION_SYNTAX, "Funktion");
+    builder.build()
+}
+
+fn add_embedded_syntax(
+    builder: &mut syntect::parsing::SyntaxSetBuilder,
+    source: &str,
+    fallback_name: &str,
+) {
+    match SyntaxDefinition::load_from_str(
+        source,
+        /*lines_include_newline*/ true,
+        Some(fallback_name),
+    ) {
+        Ok(syntax) => builder.add(syntax),
+        Err(err) => tracing::warn!("failed to load embedded syntax {fallback_name}: {err}"),
+    }
 }
 
 // NOTE: We intentionally do NOT emit a runtime diagnostic when an ANSI-family
@@ -812,6 +835,24 @@ mod tests {
     }
 
     #[test]
+    fn highlight_funktion_has_keyword_style() {
+        let code = "fun greet(name: String) = if true then name else \"\"";
+        let lines = highlight_code_to_lines(code, "funktion");
+        assert_eq!(reconstructed(&lines), code);
+
+        let fun_span = lines[0]
+            .spans
+            .iter()
+            .find(|sp| sp.content.as_ref() == "fun");
+        assert!(fun_span.is_some(), "expected a span containing 'fun'");
+        let style = fun_span.map(|s| s.style).unwrap_or_default();
+        assert!(
+            style.fg.is_some() || style.add_modifier != Modifier::empty(),
+            "expected Funktion keyword to have non-default style, got {style:?}"
+        );
+    }
+
+    #[test]
     fn fallback_trailing_newline_no_phantom_line() {
         // pulldown-cmark sends code block text ending with '\n'.
         // The fallback path (unknown language) must not produce a phantom
@@ -1156,7 +1197,7 @@ mod tests {
         // Common file extensions.
         let extensions = [
             "rs", "py", "js", "ts", "rb", "go", "sh", "md", "yml", "kt", "ex", "hs", "pl", "php",
-            "css", "html", "cs",
+            "css", "html", "cs", "fun",
         ];
         for ext in extensions {
             assert!(
@@ -1164,6 +1205,10 @@ mod tests {
                 "find_syntax({ext:?}) returned None"
             );
         }
+        assert!(
+            find_syntax("funktion").is_some(),
+            "find_syntax(\"funktion\") returned None"
+        );
         // Patched aliases that two-face cannot resolve on its own.
         for alias in ["csharp", "c-sharp", "golang", "python3", "shell"] {
             assert!(
