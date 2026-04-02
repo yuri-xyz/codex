@@ -1,5 +1,12 @@
 # Rust/codex-rs
 
+## Fork Change Log
+
+- This personal fork documents its high-level customizations in the repo-root `CHANGES.md`.
+- After making meaningful fork-specific changes, update `CHANGES.md` with a brief, high-level summary of what changed and why.
+- Keep `CHANGES.md` concise. Document outcomes such as privacy hardening, removed features, workflow changes, or notable product behavior differences.
+- When detailed provenance is needed, the exact fork-specific changes can also be inspected through Git history filtered to commits authored by `yuri-xyz`.
+
 In the codex-rs folder where the rust code lives:
 
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
