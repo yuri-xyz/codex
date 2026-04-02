@@ -43,6 +43,7 @@ use url::Url;
 use self::realtime::PendingSteerCompareKey;
 use crate::app_command::AppCommand;
 use crate::app_event::RealtimeAudioDeviceKind;
+use crate::app_server_approval_conversions::network_approval_context_to_core;
 use crate::app_server_session::ThreadSessionState;
 #[cfg(not(target_os = "linux"))]
 use crate::audio_device::list_realtime_audio_device_names;
@@ -91,12 +92,12 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
 use codex_chatgpt::connectors;
+use codex_config::types::ApprovalsReviewer;
+use codex_config::types::Notifications;
+use codex_config::types::WindowsSandboxModeToml;
 use codex_core::config::Config;
 use codex_core::config::Constrained;
 use codex_core::config::ConstraintResult;
-use codex_core::config::types::ApprovalsReviewer;
-use codex_core::config::types::Notifications;
-use codex_core::config::types::WindowsSandboxModeToml;
 use codex_core::config_loader::ConfigLayerStackOrdering;
 use codex_core::find_thread_name_by_id;
 use codex_core::plugins::PluginsManager;
@@ -1290,16 +1291,6 @@ fn thread_session_state_to_legacy_event(
     }
 }
 
-fn convert_via_json<T, U>(value: T) -> Option<U>
-where
-    T: serde::Serialize,
-    U: serde::de::DeserializeOwned,
-{
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| serde_json::from_value(value).ok())
-}
-
 fn hook_output_entry_from_notification(
     entry: codex_app_server_protocol::HookOutputEntry,
 ) -> codex_protocol::protocol::HookOutputEntry {
@@ -1378,8 +1369,8 @@ fn exec_approval_request_from_params(
         reason: params.reason,
         network_approval_context: params
             .network_approval_context
-            .and_then(convert_via_json),
-        additional_permissions: params.additional_permissions.and_then(convert_via_json),
+            .map(network_approval_context_to_core),
+        additional_permissions: params.additional_permissions.map(Into::into),
         turn_id: params.turn_id,
         approval_id: params.approval_id,
         proposed_execpolicy_amendment: params
@@ -1566,10 +1557,7 @@ fn request_permissions_from_params(
         turn_id: params.turn_id,
         call_id: params.item_id,
         reason: params.reason,
-        permissions: serde_json::from_value(
-            serde_json::to_value(params.permissions).unwrap_or(serde_json::Value::Null),
-        )
-        .unwrap_or_default(),
+        permissions: params.permissions.into(),
     }
 }
 
@@ -5238,7 +5226,7 @@ fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
                 self.request_quit_without_confirmation();
             }
             SlashCommand::Logout => {
-                if let Err(e) = codex_core::auth::logout(
+                if let Err(e) = codex_login::logout(
                     &self.config.codex_home,
                     self.config.cli_auth_credentials_store_mode,
                 ) {
