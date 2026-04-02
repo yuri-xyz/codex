@@ -37,3 +37,4 @@ git log --author="yuri-xyz" --oneline
 - Adjusted the fresh-context Plan handoff to use the full clear-UI path so it clears visible chat history as well as model context before starting implementation in a new session.
 - Disabled all GitHub Actions in this fork by moving workflow YAML files out of `.github/workflows`, so GitHub no longer discovers or runs the upstream CI/release/automation workflows here.
 - Added embedded Funktion syntax highlighting for `.fun` files in the TUI so Funktion diffs, approval previews, and fenced code blocks render with language-aware coloring.
+- Hid `/plan` from the visible slash-command list and prefix suggestions while keeping direct typed `/plan` usage available for users who already know the shortcut.

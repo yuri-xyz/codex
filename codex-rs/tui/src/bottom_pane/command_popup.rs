@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_command_visible_when_collaboration_modes_enabled() {
+    fn plan_command_hidden_when_collaboration_modes_enabled() {
         let mut popup = CommandPopup::new(CommandPopupFlags {
             collaboration_modes_enabled: true,
             connectors_enabled: false,
@@ -378,10 +378,7 @@ mod tests {
         });
         popup.on_composer_text_change("/plan".to_string());
 
-        match popup.selected_item() {
-            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "plan"),
-            other => panic!("expected plan to be selected for exact match, got {other:?}"),
-        }
+        assert_eq!(popup.selected_item(), None);
     }
 
     #[test]
