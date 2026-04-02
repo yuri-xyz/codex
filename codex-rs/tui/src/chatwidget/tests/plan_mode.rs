@@ -21,9 +21,40 @@ async fn plan_implementation_popup_no_selected_snapshot() {
 }
 
 #[tokio::test]
+async fn plan_implementation_popup_yes_fresh_context_emits_clear_ui_then_submit_message_events()
+{
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.on_plan_item_completed("# Proposed Plan\n\nDo the thing.".to_string());
+    let _ = drain_insert_history(&mut rx);
+    chat.open_plan_implementation_prompt();
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let event = rx.try_recv().expect("expected AppEvent");
+    assert_matches!(event, AppEvent::ClearUi);
+
+    let event = rx.try_recv().expect("expected AppEvent");
+    let AppEvent::SubmitUserMessageWithMode {
+        text,
+        collaboration_mode,
+    } = event
+    else {
+        panic!("expected SubmitUserMessageWithMode, got {event:?}");
+    };
+    assert_eq!(
+        text,
+        "# Proposed Plan\n\nDo the thing.\n\nImplement the plan."
+    );
+    assert_eq!(collaboration_mode.mode, Some(ModeKind::Default));
+}
+
+#[tokio::test]
 async fn plan_implementation_popup_yes_emits_submit_message_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.on_plan_item_completed("# Proposed Plan\n\nDo the thing.".to_string());
+    let _ = drain_insert_history(&mut rx);
     chat.open_plan_implementation_prompt();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
@@ -35,8 +66,23 @@ async fn plan_implementation_popup_yes_emits_submit_message_event() {
     else {
         panic!("expected SubmitUserMessageWithMode, got {event:?}");
     };
-    assert_eq!(text, PLAN_IMPLEMENTATION_CODING_MESSAGE);
+    assert_eq!(
+        text,
+        "# Proposed Plan\n\nDo the thing.\n\nImplement the plan."
+    );
     assert_eq!(collaboration_mode.mode, Some(ModeKind::Default));
+}
+
+#[test]
+fn build_plan_implementation_message_appends_instruction_below_plan_text() {
+    assert_eq!(
+        ChatWidget::build_plan_implementation_message(Some("# Plan\n\nShip it")),
+        "# Plan\n\nShip it\n\nImplement the plan."
+    );
+    assert_eq!(
+        ChatWidget::build_plan_implementation_message(None),
+        PLAN_IMPLEMENTATION_CODING_MESSAGE
+    );
 }
 
 #[tokio::test]

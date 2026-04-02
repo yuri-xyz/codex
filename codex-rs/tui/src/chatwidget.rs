@@ -242,6 +242,7 @@ use tracing::warn;
 
 const DEFAULT_MODEL_DISPLAY_NAME: &str = "loading";
 const PLAN_IMPLEMENTATION_TITLE: &str = "Implement this plan?";
+const PLAN_IMPLEMENTATION_YES_FRESH_CONTEXT: &str = "Yes, implement with fresh context";
 const PLAN_IMPLEMENTATION_YES: &str = "Yes, implement this plan";
 const PLAN_IMPLEMENTATION_NO: &str = "No, stay in Plan mode";
 const PLAN_IMPLEMENTATION_CODING_MESSAGE: &str = "Implement the plan.";
@@ -906,6 +907,8 @@ pub(crate) struct ChatWidget {
     // later steer. This is cleared when the user submits a steer so the plan popup only appears
     // if a newer proposed plan arrives afterward.
     saw_plan_item_this_turn: bool,
+    // Latest completed proposed plan text for the current/most recent Plan-mode turn.
+    latest_completed_plan_text: Option<String>,
     // Latest `update_plan` checklist task counts for terminal-title rendering.
     last_plan_progress: Option<(usize, usize)>,
     // Incremental buffer for streamed plan content.
@@ -2209,6 +2212,7 @@ impl ChatWidget {
             text
         };
         if !plan_text.trim().is_empty() {
+            self.latest_completed_plan_text = Some(plan_text.clone());
             self.last_copyable_output = Some(plan_text.clone());
         }
         // Plan commit ticks can hide the status row; remember whether we streamed plan output so
@@ -2288,6 +2292,7 @@ impl ChatWidget {
             .set_turn_running(/*turn_running*/ true);
         self.saw_plan_update_this_turn = false;
         self.saw_plan_item_this_turn = false;
+        self.latest_completed_plan_text = None;
         self.last_plan_progress = None;
         self.plan_delta_buffer.clear();
         self.plan_item_active = false;
@@ -2413,20 +2418,48 @@ impl ChatWidget {
 
     fn open_plan_implementation_prompt(&mut self) {
         let default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
-        let (implement_actions, implement_disabled_reason) = match default_mask {
+        let implementation_message =
+            Self::build_plan_implementation_message(self.latest_completed_plan_text.as_deref());
+        let (implement_actions, fresh_context_actions, implement_disabled_reason) = match default_mask {
             Some(mask) => {
-                let user_text = PLAN_IMPLEMENTATION_CODING_MESSAGE.to_string();
-                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                let user_text = implementation_message.clone();
+                let implement_mask = mask.clone();
+                let implement_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                     tx.send(AppEvent::SubmitUserMessageWithMode {
                         text: user_text.clone(),
-                        collaboration_mode: mask.clone(),
+                        collaboration_mode: implement_mask.clone(),
                     });
                 })];
-                (actions, None)
+                let fresh_context_user_text = implementation_message;
+                let fresh_context_mask = mask.clone();
+                let fresh_context_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                    tx.send(AppEvent::ClearUi);
+                    tx.send(AppEvent::SubmitUserMessageWithMode {
+                        text: fresh_context_user_text.clone(),
+                        collaboration_mode: fresh_context_mask.clone(),
+                    });
+                })];
+                (implement_actions, fresh_context_actions, None)
             }
-            None => (Vec::new(), Some("Default mode unavailable".to_string())),
+            None => (
+                Vec::new(),
+                Vec::new(),
+                Some("Default mode unavailable".to_string()),
+            ),
         };
         let items = vec![
+            SelectionItem {
+                name: PLAN_IMPLEMENTATION_YES_FRESH_CONTEXT.to_string(),
+                description: Some(
+                    "Clear this chat, start a new session, then switch to Default and start coding.".to_string(),
+                ),
+                selected_description: None,
+                is_current: false,
+                actions: fresh_context_actions,
+                disabled_reason: implement_disabled_reason.clone(),
+                dismiss_on_select: true,
+                ..Default::default()
+            },
             SelectionItem {
                 name: PLAN_IMPLEMENTATION_YES.to_string(),
                 description: Some("Switch to Default and start coding.".to_string()),
@@ -2459,6 +2492,14 @@ impl ChatWidget {
             title: PLAN_IMPLEMENTATION_TITLE.to_string(),
         });
     }
+
+fn build_plan_implementation_message(plan_text: Option<&str>) -> String {
+    let Some(plan_text) = plan_text.map(str::trim).filter(|plan_text| !plan_text.is_empty()) else {
+        return PLAN_IMPLEMENTATION_CODING_MESSAGE.to_string();
+    };
+
+    format!("{plan_text}\n\n{PLAN_IMPLEMENTATION_CODING_MESSAGE}")
+}
 
     fn has_queued_follow_up_messages(&self) -> bool {
         !self.rejected_steers_queue.is_empty() || !self.queued_user_messages.is_empty()
@@ -4712,6 +4753,7 @@ impl ChatWidget {
             had_work_activity: false,
             saw_plan_update_this_turn: false,
             saw_plan_item_this_turn: false,
+            latest_completed_plan_text: None,
             last_plan_progress: None,
             plan_delta_buffer: String::new(),
             plan_item_active: false,

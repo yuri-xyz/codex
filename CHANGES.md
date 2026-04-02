@@ -32,3 +32,6 @@ git log --author="yuri-xyz" --oneline
 - Disabled the TUI startup update check so this fork no longer fetches or shows upstream release-update prompts on launch.
 - Replaced LLM-based context compaction with deterministic local compaction that folds the last 40 visible transcript events into a summary-style context message and ends it with `You left here, continue.` instead of calling remote compact APIs.
 - Removed `/mention` from the slash-command list because this fork uses direct `@` mentions instead of a separate user-facing shortcut for opening mention insertion.
+- Added a default Plan-mode handoff option to implement with fresh context, which starts a new session before sending the normal implementation handoff message.
+- Changed Plan-mode implementation handoff so it submits the actual proposed plan text followed by `Implement the plan.` instead of sending only the bare implementation sentence.
+- Adjusted the fresh-context Plan handoff to use the full clear-UI path so it clears visible chat history as well as model context before starting implementation in a new session.
