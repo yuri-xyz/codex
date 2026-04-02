@@ -6355,47 +6355,6 @@ mod tests {
     }
 
     #[test]
-    fn slash_mention_dispatches_command_and_inserts_at() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            /*has_input_focus*/ true,
-            sender,
-            /*enhanced_keys_supported*/ false,
-            "Ask Codex to do anything".to_string(),
-            /*disable_paste_burst*/ false,
-        );
-
-        type_chars_humanlike(&mut composer, &['/', 'm', 'e', 'n', 't', 'i', 'o', 'n']);
-
-        let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        match result {
-            InputResult::Command(cmd) => {
-                assert_eq!(cmd.command(), "mention");
-            }
-            InputResult::CommandWithArgs(_, _, _) => {
-                panic!("expected command dispatch without args for '/mention'")
-            }
-            InputResult::Submitted { text, .. } => {
-                panic!("expected command dispatch, but composer submitted literal text: {text}")
-            }
-            InputResult::Queued { .. } => {
-                panic!("expected command dispatch, but composer queued literal text")
-            }
-            InputResult::None => panic!("expected Command result for '/mention'"),
-        }
-        assert!(composer.textarea.is_empty(), "composer should be cleared");
-        composer.insert_str("@");
-        assert_eq!(composer.textarea.text(), "@");
-    }
-
-    #[test]
     fn slash_plan_args_preserve_text_elements() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;

@@ -291,7 +291,7 @@ mod tests {
                 CommandItem::Builtin(cmd) => cmd.command(),
             })
             .collect();
-        assert_eq!(cmds, vec!["model", "mention", "mcp"]);
+        assert_eq!(cmds, vec!["model", "mcp"]);
     }
 
     #[test]

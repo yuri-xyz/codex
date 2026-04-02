@@ -1,36 +1,36 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ModelProviderInfo;
-use crate::Prompt;
-use crate::client::ModelClientSession;
-use crate::client_common::ResponseEvent;
 #[cfg(test)]
 use crate::codex::PreviousTurnSettings;
 use crate::codex::Session;
 use crate::codex::TurnContext;
-use crate::codex::get_last_assistant_message_from_turn;
-use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::protocol::CompactedItem;
 use crate::protocol::EventMsg;
 use crate::protocol::TurnStartedEvent;
 use crate::protocol::WarningEvent;
-use crate::util::backoff;
+use crate::web_search::web_search_action_detail;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::LocalShellAction;
+use codex_protocol::models::LocalShellExecAction;
+use codex_protocol::models::LocalShellStatus;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WebSearchAction;
 use codex_protocol::user_input::UserInput;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
-use futures::prelude::*;
-use tracing::error;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+const DETERMINISTIC_COMPACT_EVENT_LIMIT: usize = 40;
+const DETERMINISTIC_COMPACT_LINE_LIMIT: usize = 200;
+const DETERMINISTIC_COMPACT_CONTINUATION: &str = "You left here, continue.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -47,8 +47,8 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
-pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
-    provider.is_openai()
+pub(crate) fn should_use_remote_compact_task(_provider: &crate::ModelProviderInfo) -> bool {
+    false
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -56,21 +56,14 @@ pub(crate) async fn run_inline_auto_compact_task(
     turn_context: Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<()> {
-    let prompt = turn_context.compact_prompt().to_string();
-    let input = vec![UserInput::Text {
-        text: prompt,
-        // Compaction prompt is synthesized; no UI element ranges to preserve.
-        text_elements: Vec::new(),
-    }];
-
-    run_compact_task_inner(sess, turn_context, input, initial_context_injection).await?;
+    run_compact_task_inner(sess, turn_context, initial_context_injection).await?;
     Ok(())
 }
 
 pub(crate) async fn run_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    input: Vec<UserInput>,
+    _input: Vec<UserInput>,
 ) -> CodexResult<()> {
     let start_event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
@@ -78,123 +71,21 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    run_compact_task_inner(
-        sess.clone(),
-        turn_context,
-        input,
-        InitialContextInjection::DoNotInject,
-    )
-    .await
+    run_compact_task_inner(sess.clone(), turn_context, InitialContextInjection::DoNotInject).await
 }
 
 async fn run_compact_task_inner(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
-    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-
-    let mut history = sess.clone_history().await;
-    history.record_items(
-        &[initial_input_for_turn.into()],
-        turn_context.truncation_policy,
-    );
-
-    let mut truncated_count = 0usize;
-
-    let max_retries = turn_context.provider.stream_max_retries();
-    let mut retries = 0;
-    let mut client_session = sess.services.model_client.new_session();
-    // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
-    // request tracking)
-    // survives retries within this compact turn.
-
-    loop {
-        // Clone is required because of the loop
-        let turn_input = history
-            .clone()
-            .for_prompt(&turn_context.model_info.input_modalities);
-        let turn_input_len = turn_input.len();
-        let prompt = Prompt {
-            input: turn_input,
-            base_instructions: sess.get_base_instructions().await,
-            personality: turn_context.personality,
-            ..Default::default()
-        };
-        let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
-        let attempt_result = drain_to_completed(
-            &sess,
-            turn_context.as_ref(),
-            &mut client_session,
-            turn_metadata_header.as_deref(),
-            &prompt,
-        )
-        .await;
-
-        match attempt_result {
-            Ok(()) => {
-                if truncated_count > 0 {
-                    sess.notify_background_event(
-                        turn_context.as_ref(),
-                        format!(
-                            "Trimmed {truncated_count} older thread item(s) before compacting so the prompt fits the model context window."
-                        ),
-                    )
-                    .await;
-                }
-                break;
-            }
-            Err(CodexErr::Interrupted) => {
-                return Err(CodexErr::Interrupted);
-            }
-            Err(e @ CodexErr::ContextWindowExceeded) => {
-                if turn_input_len > 1 {
-                    // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
-                    error!(
-                        "Context window exceeded while compacting; removing oldest history item. Error: {e}"
-                    );
-                    history.remove_first_item();
-                    truncated_count += 1;
-                    retries = 0;
-                    continue;
-                }
-                sess.set_total_tokens_full(turn_context.as_ref()).await;
-                let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
-                sess.send_event(&turn_context, event).await;
-                return Err(e);
-            }
-            Err(e) => {
-                if retries < max_retries {
-                    retries += 1;
-                    let delay = backoff(retries);
-                    sess.notify_stream_error(
-                        turn_context.as_ref(),
-                        format!("Reconnecting... {retries}/{max_retries}"),
-                        e,
-                    )
-                    .await;
-                    tokio::time::sleep(delay).await;
-                    continue;
-                } else {
-                    let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
-                    sess.send_event(&turn_context, event).await;
-                    return Err(e);
-                }
-            }
-        }
-    }
-
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
-    let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
-    let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
-
-    let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
+    let summary_text = build_deterministic_summary_text(history_items);
+    let mut new_history = build_compacted_history(Vec::new(), &[], &summary_text);
 
     if matches!(
         initial_context_injection,
@@ -229,6 +120,276 @@ async fn run_compact_task_inner(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(())
+}
+
+fn build_deterministic_summary_text(items: &[ResponseItem]) -> String {
+    let rendered_events = render_compaction_events(items);
+    let start = rendered_events
+        .len()
+        .saturating_sub(DETERMINISTIC_COMPACT_EVENT_LIMIT);
+    let mut sections = rendered_events[start..].to_vec();
+    sections.push(DETERMINISTIC_COMPACT_CONTINUATION.to_string());
+
+    format!("{SUMMARY_PREFIX}\n{}", sections.join("\n\n"))
+}
+
+fn render_compaction_events(items: &[ResponseItem]) -> Vec<String> {
+    let mut tool_names_by_call_id = HashMap::new();
+
+    items.iter()
+        .filter_map(|item| render_compaction_event(item, &mut tool_names_by_call_id))
+        .collect()
+}
+
+fn render_compaction_event(
+    item: &ResponseItem,
+    tool_names_by_call_id: &mut HashMap<String, String>,
+) -> Option<String> {
+    let rendered = match item {
+        ResponseItem::Message { role, content, .. } if role == "user" => {
+            if crate::event_mapping::is_contextual_user_message_content(content) {
+                None
+            } else {
+                content_items_to_text(content).map(|text| format!("User\n{text}"))
+            }
+        }
+        ResponseItem::Message { role, content, .. } if role == "assistant" => {
+            content_items_to_text(content).map(|text| format!("Assistant\n{text}"))
+        }
+        ResponseItem::Reasoning {
+            summary, content, ..
+        } => render_reasoning_event(summary, content.as_deref()),
+        ResponseItem::LocalShellCall { status, action, .. } => {
+            render_local_shell_event(status, action)
+        }
+        ResponseItem::FunctionCall {
+            call_id,
+            name,
+            namespace,
+            arguments,
+            ..
+        } => {
+            let tool_name = qualified_tool_name(namespace.as_deref(), name);
+            tool_names_by_call_id.insert(call_id.clone(), tool_name.clone());
+            Some(render_tool_call_event(&tool_name, arguments))
+        }
+        ResponseItem::CustomToolCall {
+            call_id,
+            name,
+            input,
+            ..
+        } => {
+            tool_names_by_call_id.insert(call_id.clone(), name.clone());
+            Some(render_tool_call_event(name, input))
+        }
+        ResponseItem::FunctionCallOutput {
+            call_id, output, ..
+        }
+        | ResponseItem::CustomToolCallOutput {
+            call_id, output, ..
+        } => render_tool_output_event(tool_names_by_call_id.get(call_id), output),
+        ResponseItem::ToolSearchCall {
+            call_id,
+            execution,
+            arguments,
+            ..
+        } => {
+            if let Some(call_id) = call_id {
+                tool_names_by_call_id.insert(call_id.clone(), "tool_search".to_string());
+            }
+            let body = pretty_json_value(arguments).unwrap_or_else(|| arguments.to_string());
+            Some(format!("Tool search call ({execution})\n{body}"))
+        }
+        ResponseItem::ToolSearchOutput {
+            call_id,
+            execution,
+            status,
+            tools,
+        } => {
+            let label = call_id
+                .as_ref()
+                .and_then(|id| tool_names_by_call_id.get(id))
+                .cloned()
+                .unwrap_or_else(|| "tool_search".to_string());
+            let body = if tools.is_empty() {
+                "[]".to_string()
+            } else {
+                pretty_json_value(&serde_json::Value::Array(tools.clone()))
+                    .unwrap_or_else(|| serde_json::Value::Array(tools.clone()).to_string())
+            };
+            Some(format!("Tool output: {label} ({execution}, {status})\n{body}"))
+        }
+        ResponseItem::WebSearchCall { status, action, .. } => {
+            render_web_search_event(status.as_deref(), action.as_ref())
+        }
+        ResponseItem::ImageGenerationCall {
+            status,
+            revised_prompt,
+            result,
+            ..
+        } => {
+            let mut sections = vec![format!("Image generation ({status})")];
+            if let Some(prompt) = revised_prompt.as_ref().filter(|prompt| !prompt.trim().is_empty())
+            {
+                sections.push(format!("Prompt\n{prompt}"));
+            }
+            if !result.trim().is_empty() {
+                sections.push(format!("Result\n{result}"));
+            }
+            Some(sections.join("\n"))
+        }
+        ResponseItem::GhostSnapshot { .. }
+        | ResponseItem::Compaction { .. }
+        | ResponseItem::Other
+        | ResponseItem::Message { .. } => None,
+    }?;
+
+    Some(truncate_rendered_event_lines(&rendered, DETERMINISTIC_COMPACT_LINE_LIMIT))
+}
+
+fn render_reasoning_event(
+    summary: &[codex_protocol::models::ReasoningItemReasoningSummary],
+    content: Option<&[codex_protocol::models::ReasoningItemContent]>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    let summary_text = summary
+        .iter()
+        .map(|entry| match entry {
+            codex_protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
+                text.as_str()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !summary_text.trim().is_empty() {
+        sections.push(format!("Reasoning summary\n{summary_text}"));
+    }
+
+    let raw_text = content
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| match entry {
+            codex_protocol::models::ReasoningItemContent::ReasoningText { text }
+            | codex_protocol::models::ReasoningItemContent::Text { text } => text.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !raw_text.trim().is_empty() {
+        sections.push(format!("Reasoning\n{raw_text}"));
+    }
+
+    (!sections.is_empty()).then(|| sections.join("\n"))
+}
+
+fn render_local_shell_event(status: &LocalShellStatus, action: &LocalShellAction) -> Option<String> {
+    match action {
+        LocalShellAction::Exec(LocalShellExecAction {
+            command,
+            working_directory,
+            ..
+        }) => {
+            let mut sections = vec![format!(
+                "Shell command ({})\n{}",
+                local_shell_status_label(status),
+                command.join(" ")
+            )];
+            if let Some(working_directory) = working_directory
+                .as_ref()
+                .filter(|working_directory| !working_directory.trim().is_empty())
+            {
+                sections.push(format!("cwd: {working_directory}"));
+            }
+            Some(sections.join("\n"))
+        }
+    }
+}
+
+fn local_shell_status_label(status: &LocalShellStatus) -> &'static str {
+    match status {
+        LocalShellStatus::Completed => "completed",
+        LocalShellStatus::InProgress => "in_progress",
+        LocalShellStatus::Incomplete => "incomplete",
+    }
+}
+
+fn qualified_tool_name(namespace: Option<&str>, name: &str) -> String {
+    match namespace {
+        Some(namespace) if !namespace.trim().is_empty() => format!("{namespace}.{name}"),
+        _ => name.to_string(),
+    }
+}
+
+fn render_tool_call_event(tool_name: &str, input: &str) -> String {
+    let body = pretty_json_str(input).unwrap_or_else(|| input.to_string());
+    format!("Tool call: {tool_name}\n{body}")
+}
+
+fn render_tool_output_event(
+    tool_name: Option<&String>,
+    output: &FunctionCallOutputPayload,
+) -> Option<String> {
+    output.body.to_text().map(|text| {
+        let label = tool_name.map_or("tool", String::as_str);
+        format!("Tool output: {label}\n{text}")
+    })
+}
+
+fn render_web_search_event(status: Option<&str>, action: Option<&WebSearchAction>) -> Option<String> {
+    let action_label = action.map_or_else(
+        || "web search".to_string(),
+        |action| match action {
+            WebSearchAction::Search { .. } => "web search".to_string(),
+            WebSearchAction::OpenPage { .. } => "open page".to_string(),
+            WebSearchAction::FindInPage { .. } => "find in page".to_string(),
+            WebSearchAction::Other => "web search".to_string(),
+        },
+    );
+    let detail = action.map(web_search_action_detail).unwrap_or_default();
+    let heading = match status {
+        Some(status) if !status.trim().is_empty() => format!("{action_label} ({status})"),
+        _ => action_label,
+    };
+
+    if detail.trim().is_empty() {
+        Some(heading)
+    } else {
+        Some(format!("{heading}\n{detail}"))
+    }
+}
+
+fn pretty_json_str(value: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .and_then(|value| pretty_json_value(&value))
+}
+
+fn pretty_json_value(value: &serde_json::Value) -> Option<String> {
+    serde_json::to_string_pretty(value).ok()
+}
+
+fn truncate_rendered_event_lines(text: &str, max_lines: usize) -> String {
+    if max_lines == 0 {
+        return format!("… event truncated after {max_lines} lines");
+    }
+
+    let mut line_count = 0usize;
+    let mut kept: Vec<String> = Vec::new();
+    let mut truncated = false;
+    for line in text.lines() {
+        if line_count == max_lines {
+            truncated = true;
+            break;
+        }
+        kept.push(line.to_string());
+        line_count += 1;
+    }
+
+    if !truncated {
+        return text.to_string();
+    }
+
+    kept.push(format!("… event truncated after {max_lines} lines"));
+    kept.join("\n")
 }
 
 pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
@@ -387,54 +548,6 @@ fn build_compacted_history_with_limit(
     });
 
     history
-}
-
-async fn drain_to_completed(
-    sess: &Session,
-    turn_context: &TurnContext,
-    client_session: &mut ModelClientSession,
-    turn_metadata_header: Option<&str>,
-    prompt: &Prompt,
-) -> CodexResult<()> {
-    let mut stream = client_session
-        .stream(
-            prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
-            turn_context.reasoning_summary,
-            turn_context.config.service_tier,
-            turn_metadata_header,
-        )
-        .await?;
-    loop {
-        let maybe_event = stream.next().await;
-        let Some(event) = maybe_event else {
-            return Err(CodexErr::Stream(
-                "stream closed before response.completed".into(),
-                None,
-            ));
-        };
-        match event {
-            Ok(ResponseEvent::OutputItemDone(item)) => {
-                sess.record_into_history(std::slice::from_ref(&item), turn_context)
-                    .await;
-            }
-            Ok(ResponseEvent::ServerReasoningIncluded(included)) => {
-                sess.set_server_reasoning_included(included).await;
-            }
-            Ok(ResponseEvent::RateLimits(snapshot)) => {
-                sess.update_rate_limits(turn_context, snapshot).await;
-            }
-            Ok(ResponseEvent::Completed { token_usage, .. }) => {
-                sess.update_token_usage_info(turn_context, token_usage.as_ref())
-                    .await;
-                return Ok(());
-            }
-            Ok(_) => continue,
-            Err(e) => return Err(e),
-        }
-    }
 }
 
 #[cfg(test)]

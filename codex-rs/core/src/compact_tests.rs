@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
 async fn process_compacted_history_with_test_session(
     compacted_history: Vec<ResponseItem>,
@@ -570,4 +571,106 @@ fn insert_initial_context_before_last_real_user_or_summary_keeps_compaction_last
         },
     ];
     assert_eq!(refreshed, expected);
+}
+
+#[test]
+fn deterministic_summary_text_keeps_last_visible_events_only() {
+    let items = (0..45)
+        .map(|index| ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: format!("assistant message {index:03}"),
+            }],
+            end_turn: None,
+            phase: None,
+        })
+        .collect::<Vec<_>>();
+
+    let summary = build_deterministic_summary_text(&items);
+
+    assert!(summary.starts_with(&format!("{SUMMARY_PREFIX}\n")));
+    assert!(!summary.contains("assistant message 000"));
+    assert!(!summary.contains("assistant message 004"));
+    assert!(summary.contains("assistant message 005"));
+    assert!(summary.contains("assistant message 044"));
+    assert!(summary.ends_with(DETERMINISTIC_COMPACT_CONTINUATION));
+}
+
+#[test]
+fn deterministic_summary_text_renders_tool_calls_and_caps_long_outputs() {
+    let long_output = (1..=205)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let items = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "exec_command".to_string(),
+            namespace: Some("functions".to_string()),
+            arguments: json!({ "cmd": "echo hi" }).to_string(),
+            call_id: "call-1".to_string(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: "call-1".to_string(),
+            output: FunctionCallOutputPayload::from_text(long_output),
+        },
+    ];
+
+    let summary = build_deterministic_summary_text(&items);
+
+    assert!(summary.contains("Tool call: functions.exec_command"));
+    assert!(summary.contains("Tool output: functions.exec_command"));
+    assert!(summary.contains("line 1"));
+    assert!(summary.contains("line 199"));
+    assert!(!summary.contains("line 200"));
+    assert!(summary.contains("… event truncated after 200 lines"));
+}
+
+#[tokio::test]
+async fn auto_compact_uses_deterministic_local_history_rendering() {
+    let (session, turn_context) = crate::codex::make_session_and_context().await;
+    let session = std::sync::Arc::new(session);
+    let turn_context = std::sync::Arc::new(turn_context);
+    let items = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "first user message".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "assistant reply".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+    ];
+    session.record_into_history(&items, &turn_context).await;
+
+    run_inline_auto_compact_task(
+        session.clone(),
+        turn_context.clone(),
+        InitialContextInjection::DoNotInject,
+    )
+    .await
+    .expect("deterministic auto compact should succeed");
+
+    let snapshot = session.clone_history().await;
+    let Some(ResponseItem::Message { role, content, .. }) = snapshot.raw_items().last() else {
+        panic!("expected compacted history to end with a summary message");
+    };
+    assert_eq!(role, "user");
+    let summary_text = content_items_to_text(content).unwrap_or_default();
+    assert!(summary_text.starts_with(&format!("{SUMMARY_PREFIX}\n")));
+    assert!(summary_text.contains("User\nfirst user message"));
+    assert!(summary_text.contains("Assistant\nassistant reply"));
+    assert!(summary_text.ends_with(DETERMINISTIC_COMPACT_CONTINUATION));
+    assert!(!summary_text.contains(SUMMARIZATION_PROMPT));
 }

@@ -142,7 +142,7 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
 }
 
 #[tokio::test]
-async fn live_app_server_file_change_item_started_preserves_changes() {
+async fn live_app_server_file_change_item_started_defers_history_until_completion() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.handle_server_notification(
@@ -162,12 +162,71 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
         /*replay_kind*/ None,
     );
 
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "pending app-server file changes should not render as applied before approval/completion"
+    );
+
+    chat.handle_server_request(
+        codex_app_server_protocol::ServerRequest::FileChangeRequestApproval {
+            request_id: codex_app_server_protocol::RequestId::String("req-1".to_string()),
+            params: codex_app_server_protocol::FileChangeRequestApprovalParams {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "patch-1".to_string(),
+                reason: None,
+                grant_root: None,
+            },
+        },
+        /*replay_kind*/ None,
+    );
+
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "approval requests should render in the modal, not transcript history"
+    );
+
+    let area = Rect::new(0, 0, 80, 16);
+    let mut buf = Buffer::empty(area);
+    chat.render(area, &mut buf);
+    let rendered = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Would you like to make the following edits?")
+            && rendered.contains("foo.txt")
+            && rendered.contains("+1 -0"),
+        "expected approval modal to show the pending patch diff, got: {rendered}"
+    );
+
+    chat.handle_server_notification(
+        ServerNotification::ItemCompleted(ItemCompletedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: AppServerThreadItem::FileChange {
+                id: "patch-1".to_string(),
+                changes: vec![FileUpdateChange {
+                    path: "foo.txt".to_string(),
+                    kind: PatchChangeKind::Add,
+                    diff: "hello\n".to_string(),
+                }],
+                status: AppServerPatchApplyStatus::Completed,
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+
     let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "expected patch history to be rendered");
+    assert!(!cells.is_empty(), "expected completed patch history to be rendered");
     let transcript = lines_to_single_string(cells.last().expect("patch cell"));
     assert!(
         transcript.contains("Added foo.txt") || transcript.contains("Edited foo.txt"),
-        "expected patch summary to include foo.txt, got: {transcript}"
+        "expected completed patch summary to include foo.txt, got: {transcript}"
     );
 }
 

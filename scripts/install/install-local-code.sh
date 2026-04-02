@@ -185,7 +185,8 @@ mkdir -p "$INSTALL_BIN_DIR"
 cp "$BUILT_BINARY" "$INSTALLED_BINARY"
 chmod 0755 "$INSTALLED_BINARY"
 
-install_link "$INSTALLED_BINARY" "$LINK_PATH"
+step "Linking code to workspace build artifact"
+install_link "$BUILT_BINARY" "$LINK_PATH"
 add_to_path "$LINK_DIR"
 
 case "$PATH_ACTION" in

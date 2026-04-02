@@ -111,6 +111,35 @@ async fn turn_started_uses_runtime_context_window_before_first_token_count() {
         "expected /status to avoid raw config context window, got: {context_line}"
     );
 }
+
+#[tokio::test]
+async fn status_line_context_used_label_uses_context_word() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    assert_eq!(
+        chat.status_line_value_for_item(&crate::bottom_pane::StatusLineItem::ContextUsed),
+        Some("0% context".to_string())
+    );
+}
+
+#[tokio::test]
+async fn status_line_context_used_turns_yellow_at_high_usage() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.token_info = Some(make_token_info(/*total_tokens*/ 900, /*context_window*/ 1_000));
+
+    let span = chat
+        .status_line_span_for_item(&crate::bottom_pane::StatusLineItem::ContextUsed)
+        .expect("context-used span should be available");
+
+    let used = chat
+        .status_line_context_used_percent()
+        .expect("context-used percentage should be available");
+    assert!(used >= 85, "expected high usage threshold, got {used}");
+    assert_eq!(span.content.as_ref(), format!("{used}% context"));
+    assert_eq!(span.style.fg, Some(Color::Yellow));
+}
+
 #[tokio::test]
 async fn helpers_are_available_and_do_not_panic() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();

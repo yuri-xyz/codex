@@ -4,6 +4,9 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use ratatui::style::Color;
+use ratatui::style::Style;
+use ratatui::text::Span;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: spinner + project name.
@@ -144,16 +147,15 @@ impl ChatWidget {
 
         let mut parts = Vec::new();
         for item in &selections.status_line_items {
-            if let Some(value) = self.status_line_value_for_item(item) {
-                parts.push(value);
+            if let Some(span) = self.status_line_span_for_item(item) {
+                if !parts.is_empty() {
+                    parts.push(" · ".into());
+                }
+                parts.push(span);
             }
         }
 
-        let line = if parts.is_empty() {
-            None
-        } else {
-            Some(Line::from(parts.join(" · ")))
-        };
+        let line = (!parts.is_empty()).then_some(Line::from(parts));
         self.set_status_line(line);
     }
 
@@ -418,6 +420,30 @@ impl ChatWidget {
     /// Returning `None` means "omit this item for now", not "configuration error". Callers rely on
     /// this to keep partially available status lines readable while waiting for session, token, or
     /// git metadata.
+    pub(super) fn status_line_span_for_item(
+        &mut self,
+        item: &StatusLineItem,
+    ) -> Option<Span<'static>> {
+        let value = self.status_line_value_for_item(item)?;
+        match item {
+            StatusLineItem::ContextUsed => {
+                let used = self.status_line_context_used_percent()?.clamp(0, 100);
+                if used >= 85 {
+                    Some(Span::styled(
+                        value,
+                        Style::default().fg(Color::Yellow),
+                    ))
+                } else {
+                    Some(value.into())
+                }
+            }
+            _ => Some(value.into()),
+        }
+    }
+
+    /// Returning `None` means "omit this item for now", not "configuration error". Callers rely on
+    /// this to keep partially available status lines readable while waiting for session, token, or
+    /// git metadata.
     pub(super) fn status_line_value_for_item(&mut self, item: &StatusLineItem) -> Option<String> {
         match item {
             StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
@@ -455,7 +481,7 @@ impl ChatWidget {
                 .map(|remaining| format!("{remaining}% left")),
             StatusLineItem::ContextUsed => self
                 .status_line_context_used_percent()
-                .map(|used| format!("{used}% used")),
+                .map(|used| format!("{used}% context")),
             StatusLineItem::FiveHourLimit => {
                 let window = self
                     .rate_limit_snapshots_by_limit_id

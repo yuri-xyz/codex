@@ -34,7 +34,6 @@ pub enum SlashCommand {
     Agent,
     // Undo,
     Copy,
-    Mention,
     Status,
     DebugConfig,
     Title,
@@ -76,7 +75,6 @@ impl SlashCommand {
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy the latest Codex output to your clipboard",
-            SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
@@ -151,7 +149,6 @@ impl SlashCommand {
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Copy
             | SlashCommand::Rename
-            | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::DebugConfig

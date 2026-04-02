@@ -167,6 +167,7 @@ use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::FileChange;
 #[cfg(test)]
 use codex_protocol::protocol::ExitedReviewModeEvent;
 use codex_protocol::protocol::GuardianAssessmentAction;
@@ -831,6 +832,10 @@ pub(crate) struct ChatWidget {
     // Guardian review keeps its own pending set so it can derive a single
     // footer summary from one or more in-flight review events.
     pending_guardian_review_status: PendingGuardianReviewStatus,
+    // App-server file-change items can arrive before their paired approval
+    // request. Cache their diffs so the approval UI can show the actual patch,
+    // then only render the patch history cell once the change completes.
+    pending_app_server_file_changes: HashMap<String, HashMap<PathBuf, FileChange>>,
     // Semantic status used for terminal-title status rendering.
     terminal_title_status_kind: TerminalTitleStatusKind,
     // Previous status header to restore after a transient stream retry.
@@ -1693,13 +1698,9 @@ impl ChatWidget {
     }
 
     fn flush_unified_exec_wait_streak(&mut self) {
-        let Some(wait) = self.unified_exec_wait_streak.take() else {
+        let Some(_wait) = self.unified_exec_wait_streak.take() else {
             return;
         };
-        self.needs_final_message_separator = true;
-        let cell = history_cell::new_unified_exec_interaction(wait.command_display, String::new());
-        self.app_event_tx
-            .send(AppEvent::InsertHistoryCell(Box::new(cell)));
         self.restore_reasoning_status_header();
     }
 
@@ -3250,6 +3251,12 @@ impl ChatWidget {
     }
 
     fn on_apply_patch_approval_request(&mut self, _id: String, ev: ApplyPatchApprovalRequestEvent) {
+        let mut ev = ev;
+        if ev.changes.is_empty()
+            && let Some(changes) = self.pending_app_server_file_changes.get(&ev.call_id)
+        {
+            ev.changes = changes.clone();
+        }
         let ev2 = ev.clone();
         self.defer_or_handle(
             |q| q.push_apply_patch_approval(ev),
@@ -4679,6 +4686,7 @@ impl ChatWidget {
             full_reasoning_buffer: String::new(),
             current_status: StatusIndicatorState::working(),
             pending_guardian_review_status: PendingGuardianReviewStatus::default(),
+            pending_app_server_file_changes: HashMap::new(),
             terminal_title_status_kind: TerminalTitleStatusKind::Working,
             retry_status_header: None,
             pending_status_indicator_restore: false,
@@ -5226,9 +5234,6 @@ impl ChatWidget {
                         self.add_error_message(format!("Failed to copy to clipboard: {err}"))
                     }
                 }
-            }
-            SlashCommand::Mention => {
-                self.insert_str("@");
             }
             SlashCommand::Skills => {
                 self.open_skills_menu();
@@ -6037,10 +6042,23 @@ impl ChatWidget {
                 changes,
                 status,
             } => {
-                if !matches!(
+                if matches!(
                     status,
                     codex_app_server_protocol::PatchApplyStatus::InProgress
                 ) {
+                    self.pending_app_server_file_changes
+                        .insert(id, app_server_patch_changes_to_core(changes));
+                } else {
+                    let core_changes = app_server_patch_changes_to_core(changes);
+                    self.pending_app_server_file_changes.remove(&id);
+                    if matches!(status, codex_app_server_protocol::PatchApplyStatus::Completed) {
+                        self.on_patch_apply_begin(codex_protocol::protocol::PatchApplyBeginEvent {
+                            call_id: id.clone(),
+                            turn_id: turn_id.clone(),
+                            auto_approved: false,
+                            changes: core_changes.clone(),
+                        });
+                    }
                     self.on_patch_apply_end(codex_protocol::protocol::PatchApplyEndEvent {
                         call_id: id,
                         turn_id: turn_id.clone(),
@@ -6050,7 +6068,7 @@ impl ChatWidget {
                             status,
                             codex_app_server_protocol::PatchApplyStatus::Failed
                         ),
-                        changes: app_server_patch_changes_to_core(changes),
+                        changes: core_changes,
                         status: match status {
                             codex_app_server_protocol::PatchApplyStatus::Completed => {
                                 codex_protocol::protocol::PatchApplyStatus::Completed
@@ -6569,12 +6587,8 @@ impl ChatWidget {
                 });
             }
             ThreadItem::FileChange { id, changes, .. } => {
-                self.on_patch_apply_begin(PatchApplyBeginEvent {
-                    call_id: id,
-                    turn_id: notification.turn_id,
-                    auto_approved: false,
-                    changes: app_server_patch_changes_to_core(changes),
-                });
+                self.pending_app_server_file_changes
+                    .insert(id, app_server_patch_changes_to_core(changes));
             }
             ThreadItem::McpToolCall {
                 id,

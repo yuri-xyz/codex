@@ -22,3 +22,13 @@ git log --author="yuri-xyz" --oneline
 - Increased visible exec-command output in the TUI so shell results keep more head/tail lines before truncation.
 - Added a local installer script for Apple Silicon macOS that builds this fork and links it to the `code` command.
 - Added a `Build` collaboration mode to the TUI mode cycle so file edits always require explicit approval while keeping build-oriented execution available without switching into Plan mode.
+- Fixed `Build` mode patch approvals in the TUI so file edits open the approval UI with the real diff before the edit is shown in transcript history, and stopped the mode instructions from telling the model to ask for permission in plain text first.
+- Fixed patch-approval diff rendering so the approval modal preserves file-extension-based syntax highlighting instead of dropping it when rendering per-file changes.
+- Capped visible patch/diff previews in the TUI at 200 lines and added a truncation marker so large file edits do not flood transcript history or approval dialogs.
+- Stopped logging passive background-terminal wait events into the chat transcript so polling-only waits stay in status UI instead of adding message noise.
+- Renamed the status-line context-used label from `used` to `context` and highlight it in yellow once usage reaches 85% or higher.
+- Renamed the visible TUI startup/header product label from `OpenAI Codex` to `Jailbroken Codex`.
+- Updated the local `code` installer to link directly to the repo build artifact because copied home-directory installs were getting killed on startup on this machine.
+- Disabled the TUI startup update check so this fork no longer fetches or shows upstream release-update prompts on launch.
+- Replaced LLM-based context compaction with deterministic local compaction that folds the last 40 visible transcript events into a summary-style context message and ends it with `You left here, continue.` instead of calling remote compact APIs.
+- Removed `/mention` from the slash-command list because this fork uses direct `@` mentions instead of a separate user-facing shortcut for opening mention insertion.

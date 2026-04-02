@@ -23,7 +23,7 @@ fn build_preset_includes_build_mode_instructions() {
         .expect("build instructions should be set");
 
     assert!(build_instructions.contains("You are now in Build mode."));
-    assert!(build_instructions.contains("file edits require explicit approval"));
+    assert!(build_instructions.contains("runtime/UI will request it automatically"));
 }
 
 #[test]

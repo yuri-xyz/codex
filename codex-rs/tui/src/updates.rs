@@ -1,48 +1,23 @@
 #![cfg(not(debug_assertions))]
 
+#[cfg(test)]
 use crate::update_action;
+#[cfg(test)]
 use crate::update_action::UpdateAction;
 use chrono::DateTime;
-use chrono::Duration;
 use chrono::Utc;
 use codex_core::config::Config;
+#[cfg(test)]
 use codex_core::default_client::create_client;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::version::CODEX_CLI_VERSION;
-
 pub fn get_upgrade_version(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup {
-        return None;
-    }
-
-    let version_file = version_filepath(config);
-    let info = read_version_info(&version_file).ok();
-
-    if match &info {
-        None => true,
-        Some(info) => info.last_checked_at < Utc::now() - Duration::hours(20),
-    } {
-        // Refresh the cached latest version in the background so TUI startup
-        // isn’t blocked by a network call. The UI reads the previously cached
-        // value (if any) for this run; the next run shows the banner if needed.
-        tokio::spawn(async move {
-            check_for_update(&version_file)
-                .await
-                .inspect_err(|e| tracing::error!("Failed to update version: {e}"))
-        });
-    }
-
-    info.and_then(|info| {
-        if is_newer(&info.latest_version, CODEX_CLI_VERSION).unwrap_or(false) {
-            Some(info.latest_version)
-        } else {
-            None
-        }
-    })
+    let _ = config;
+    // This fork does not surface startup update checks.
+    None
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -56,14 +31,18 @@ struct VersionInfo {
 
 const VERSION_FILENAME: &str = "version.json";
 // We use the latest version from the cask if installation is via homebrew - homebrew does not immediately pick up the latest release and can lag behind.
+#[cfg(test)]
 const HOMEBREW_CASK_API_URL: &str = "https://formulae.brew.sh/api/cask/codex.json";
+#[cfg(test)]
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
 
+#[cfg(test)]
 #[derive(Deserialize, Debug, Clone)]
 struct ReleaseInfo {
     tag_name: String,
 }
 
+#[cfg(test)]
 #[derive(Deserialize, Debug, Clone)]
 struct HomebrewCaskInfo {
     version: String,
@@ -78,6 +57,7 @@ fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
     Ok(serde_json::from_str(&contents)?)
 }
 
+#[cfg(test)]
 async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
     let latest_version = match update_action::get_update_action() {
         Some(UpdateAction::BrewUpgrade) => {
@@ -120,6 +100,7 @@ async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn is_newer(latest: &str, current: &str) -> Option<bool> {
     match (parse_version(latest), parse_version(current)) {
         (Some(l), Some(c)) => Some(l > c),
@@ -127,6 +108,7 @@ fn is_newer(latest: &str, current: &str) -> Option<bool> {
     }
 }
 
+#[cfg(test)]
 fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<String> {
     latest_tag_name
         .strip_prefix("rust-v")
@@ -137,19 +119,8 @@ fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<Stri
 /// Returns the latest version to show in a popup, if it should be shown.
 /// This respects the user's dismissal choice for the current latest version.
 pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup {
-        return None;
-    }
-
-    let version_file = version_filepath(config);
-    let latest = get_upgrade_version(config)?;
-    // If the user dismissed this exact version previously, do not show the popup.
-    if let Ok(info) = read_version_info(&version_file)
-        && info.dismissed_version.as_deref() == Some(latest.as_str())
-    {
-        return None;
-    }
-    Some(latest)
+    let _ = config;
+    None
 }
 
 /// Persist a dismissal for the current latest version so we don't show
@@ -169,6 +140,7 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     Ok(())
 }
 
+#[cfg(test)]
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     let mut iter = v.trim().split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
