@@ -49,6 +49,41 @@ just test
 cargo test --all-features
 ```
 
+### Build and link this fork locally
+
+To build this fork in `release` mode and link it as `code` without needing root,
+run the local installer from the repo root:
+
+```bash
+BUILD_PROFILE=release ./scripts/install/install-local-code.sh
+```
+
+Behavior:
+
+- Apple Silicon macOS: links into a writable bin directory such as `/opt/homebrew/bin`,
+  `/usr/local/bin`, `~/.local/bin`, or `~/bin`
+- Linux, including Fedora: prefers rootless user-space install locations such as
+  `~/.local/bin` or `~/bin` before trying system directories
+
+Linux builds from source also need a C toolchain on `PATH`. On Fedora, install `gcc`
+first so Cargo has a linker available:
+
+```bash
+sudo dnf install gcc
+```
+
+This repo's Linux sandbox crate also needs development packages for OpenSSL and libcap:
+
+```bash
+sudo dnf install openssl-devel libcap-devel
+```
+
+You can override the link directory explicitly:
+
+```bash
+CODEX_CODE_INSTALL_DIR="$HOME/.local/bin" BUILD_PROFILE=release ./scripts/install/install-local-code.sh
+```
+
 ## Tracing / verbose logging
 
 Codex is written in Rust, so it honors the `RUST_LOG` environment variable to configure its logging behavior.

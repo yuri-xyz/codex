@@ -21,6 +21,8 @@ git log --author="yuri-xyz" --oneline
 - Made the `request_user_input` question tool available in both Default and Plan collaboration modes by default.
 - Increased visible exec-command output in the TUI so shell results keep more head/tail lines before truncation.
 - Added a local installer script for Apple Silicon macOS that builds this fork and links it to the `code` command.
+- Extended the local `code` installer to support Linux as well, and prefer rootless user-space link locations such as `~/.local/bin` on Fedora/Linux before system directories.
+- Added Linux installer preflight checks so missing Fedora build dependencies such as `gcc`, `openssl-devel`, and `libcap-devel` fail fast with explicit package hints instead of surfacing later as Cargo build-script errors.
 - Added a `Build` collaboration mode to the TUI mode cycle so file edits always require explicit approval while keeping build-oriented execution available without switching into Plan mode.
 - Fixed `Build` mode patch approvals in the TUI so file edits open the approval UI with the real diff before the edit is shown in transcript history, and stopped the mode instructions from telling the model to ask for permission in plain text first.
 - Fixed patch-approval diff rendering so the approval modal preserves file-extension-based syntax highlighting instead of dropping it when rendering per-file changes.

@@ -12,6 +12,10 @@ step() {
   printf '==> %s\n' "$1"
 }
 
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
 fail() {
   printf 'error: %s\n' "$1" >&2
   exit 1
@@ -74,19 +78,34 @@ add_to_path() {
   fi
 }
 
-assert_macos_apple_silicon() {
-  [ "$(uname -s)" = "Darwin" ] || fail "this installer only supports macOS"
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin)
+      PLATFORM_OS="macos"
+      ;;
+    Linux)
+      PLATFORM_OS="linux"
+      ;;
+    *)
+      fail "unsupported operating system: $(uname -s)"
+      ;;
+  esac
 
-  arch="$(uname -m)"
-  if [ "$arch" = "arm64" ]; then
-    return
-  fi
+  PLATFORM_ARCH="$(uname -m)"
 
-  if [ "$arch" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = "1" ]; then
-    fail "this shell is running under Rosetta; rerun from a native Apple Silicon terminal"
-  fi
-
-  fail "this installer only supports Apple Silicon macOS; detected architecture: $arch"
+  case "$PLATFORM_OS:$PLATFORM_ARCH" in
+    macos:arm64 | linux:x86_64 | linux:amd64 | linux:aarch64 | linux:arm64)
+      ;;
+    macos:x86_64)
+      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = "1" ]; then
+        fail "this shell is running under Rosetta; rerun from a native Apple Silicon terminal"
+      fi
+      fail "this installer only supports Apple Silicon macOS; detected architecture: $PLATFORM_ARCH"
+      ;;
+    *)
+      fail "unsupported architecture for $PLATFORM_OS: $PLATFORM_ARCH"
+      ;;
+  esac
 }
 
 choose_link_dir() {
@@ -106,7 +125,13 @@ choose_link_dir() {
     fi
   fi
 
-  for dir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+  if [ "$PLATFORM_OS" = "macos" ]; then
+    candidate_dirs="/opt/homebrew/bin /usr/local/bin $HOME/.local/bin $HOME/bin"
+  else
+    candidate_dirs="$HOME/.local/bin $HOME/bin /usr/local/bin"
+  fi
+
+  for dir in $candidate_dirs; do
     if mkdir -p "$dir" 2>/dev/null && [ -w "$dir" ]; then
       printf '%s\n' "$dir"
       return
@@ -114,6 +139,36 @@ choose_link_dir() {
   done
 
   fail "could not find a writable install directory for the code command"
+}
+
+configure_linux_linker() {
+  [ "$PLATFORM_OS" = "linux" ] || return
+
+  if command -v cc >/dev/null 2>&1; then
+    return
+  fi
+
+  if command -v gcc >/dev/null 2>&1; then
+    export CC=gcc
+    return
+  fi
+
+  if command -v clang >/dev/null 2>&1; then
+    export CC=clang
+    return
+  fi
+
+  fail "no C compiler found; install gcc or clang first (Fedora: sudo dnf install gcc)"
+}
+
+require_linux_pkg_config_dep() {
+  dep="$1"
+  package_hint="$2"
+
+  [ "$PLATFORM_OS" = "linux" ] || return
+
+  command -v pkg-config >/dev/null 2>&1 || fail "missing required command: pkg-config"
+  pkg-config --exists "$dep" || fail "missing required system library metadata for $dep (Fedora: sudo dnf install $package_hint)"
 }
 
 install_link() {
@@ -137,7 +192,11 @@ install_link() {
   step "Linked $link_path -> $target"
 }
 
-assert_macos_apple_silicon
+detect_platform
+require_command cargo
+configure_linux_linker
+require_linux_pkg_config_dep openssl openssl-devel
+require_linux_pkg_config_dep libcap libcap-devel
 
 ROOT_DIR="$(repo_root)"
 CODEX_RS_DIR="$ROOT_DIR/codex-rs"
