@@ -1,6 +1,8 @@
 use super::*;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::test_support::test_path_buf;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::TraceId;
 use opentelemetry::trace::TracerProvider as _;
@@ -242,6 +244,7 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
 fn turn_items_for_thread_returns_matching_turn_items() {
     let thread = AppServerThread {
         id: "thread-1".to_string(),
+        forked_from_id: None,
         preview: String::new(),
         ephemeral: false,
         model_provider: "openai".to_string(),
@@ -249,7 +252,7 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         updated_at: 0,
         status: codex_app_server_protocol::ThreadStatus::Idle,
         path: None,
-        cwd: PathBuf::from("/tmp/project"),
+        cwd: test_path_buf("/tmp/project").abs(),
         cli_version: "0.0.0-test".to_string(),
         source: codex_app_server_protocol::SessionSource::Exec,
         agent_nickname: None,
@@ -267,6 +270,9 @@ fn turn_items_for_thread_returns_matching_turn_items() {
                 }],
                 status: codex_app_server_protocol::TurnStatus::Completed,
                 error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
             },
             codex_app_server_protocol::Turn {
                 id: "turn-2".to_string(),
@@ -276,6 +282,9 @@ fn turn_items_for_thread_returns_matching_turn_items() {
                 }],
                 status: codex_app_server_protocol::TurnStatus::Completed,
                 error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
             },
         ],
     };
@@ -290,6 +299,28 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         }])
     );
     assert_eq!(turn_items_for_thread(&thread, "missing-turn"), None);
+}
+
+#[test]
+fn should_backfill_turn_completed_items_skips_ephemeral_threads() {
+    let notification =
+        ServerNotification::TurnCompleted(codex_app_server_protocol::TurnCompletedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: codex_app_server_protocol::Turn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: codex_app_server_protocol::TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            },
+        });
+
+    assert!(!should_backfill_turn_completed_items(
+        /*thread_ephemeral*/ true,
+        &notification
+    ));
 }
 
 #[test]
@@ -330,6 +361,11 @@ async fn thread_start_params_include_review_policy_when_review_policy_is_manual_
         params.approvals_reviewer,
         Some(codex_app_server_protocol::ApprovalsReviewer::User)
     );
+    assert_eq!(params.sandbox, None);
+    assert_eq!(
+        params.permission_profile,
+        Some(config.permissions.permission_profile().into())
+    );
 }
 
 #[tokio::test]
@@ -339,7 +375,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
     let config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(ConfigOverrides {
-            approvals_reviewer: Some(ApprovalsReviewer::GuardianSubagent),
+            approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
             ..Default::default()
         })
         .fallback_cwd(Some(cwd.path().to_path_buf()))
@@ -351,7 +387,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
 
     assert_eq!(
         params.approvals_reviewer,
-        Some(codex_app_server_protocol::ApprovalsReviewer::GuardianSubagent)
+        Some(codex_app_server_protocol::ApprovalsReviewer::AutoReview)
     );
 }
 
@@ -360,6 +396,7 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
     let response = ThreadStartResponse {
         thread: codex_app_server_protocol::Thread {
             id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
+            forked_from_id: None,
             preview: String::new(),
             ephemeral: false,
             model_provider: "openai".to_string(),
@@ -367,7 +404,7 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
             updated_at: 0,
             status: codex_app_server_protocol::ThreadStatus::Idle,
             path: Some(PathBuf::from("/tmp/rollout.jsonl")),
-            cwd: PathBuf::from("/tmp"),
+            cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),
             source: codex_app_server_protocol::SessionSource::Cli,
             agent_nickname: None,
@@ -379,24 +416,27 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
         model: "gpt-5.4".to_string(),
         model_provider: "openai".to_string(),
         service_tier: None,
-        cwd: PathBuf::from("/tmp"),
+        cwd: test_path_buf("/tmp").abs(),
+        instruction_sources: Vec::new(),
         approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
-        approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::GuardianSubagent,
+        approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
         sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
-            read_only_access: codex_app_server_protocol::ReadOnlyAccess::FullAccess,
             network_access: false,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
         },
+        permission_profile: Some(
+            codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
+                &codex_protocol::protocol::SandboxPolicy::new_workspace_write_policy(),
+            )
+            .into(),
+        ),
         reasoning_effort: None,
     };
 
     let event = session_configured_from_thread_start_response(&response)
         .expect("build bootstrap session configured event");
 
-    assert_eq!(
-        event.approvals_reviewer,
-        ApprovalsReviewer::GuardianSubagent
-    );
+    assert_eq!(event.approvals_reviewer, ApprovalsReviewer::AutoReview);
 }

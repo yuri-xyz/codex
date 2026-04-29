@@ -5,7 +5,6 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
-use async_trait::async_trait;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_tools::REQUEST_USER_INPUT_TOOL_NAME;
 use codex_tools::normalize_request_user_input_args;
@@ -15,7 +14,6 @@ pub struct RequestUserInputHandler {
     pub default_mode_request_user_input: bool,
 }
 
-#[async_trait]
 impl ToolHandler for RequestUserInputHandler {
     type Output = FunctionToolOutput;
 
@@ -40,6 +38,12 @@ impl ToolHandler for RequestUserInputHandler {
                 )));
             }
         };
+
+        if turn.session_source.is_non_root_agent() {
+            return Err(FunctionCallError::RespondToModel(
+                "request_user_input can only be used by the root thread".to_string(),
+            ));
+        }
 
         let mode = session.collaboration_mode().await.mode;
         if let Some(message) =
@@ -69,3 +73,7 @@ impl ToolHandler for RequestUserInputHandler {
         Ok(FunctionToolOutput::from_text(content, Some(true)))
     }
 }
+
+#[cfg(test)]
+#[path = "request_user_input_tests.rs"]
+mod tests;

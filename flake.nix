@@ -67,13 +67,15 @@
           default = pkgs.mkShell {
             buildInputs = [
               rust
+              pkgs.just
               pkgs.pkg-config
               pkgs.openssl
+              pkgs.libcap
               pkgs.cmake
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
             ];
-            PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+            PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.libcap.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
             # Use clang for BoringSSL compilation (avoids GCC 15 warnings-as-errors)
             shellHook = ''

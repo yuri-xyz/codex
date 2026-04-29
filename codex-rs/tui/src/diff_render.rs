@@ -45,11 +45,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
+use codex_utils_absolute_path::AbsolutePathBuf;
 use unicode_width::UnicodeWidthChar;
 
 /// Display width of a tab character in columns.
 const TAB_WIDTH: usize = 4;
-const MAX_DIFF_PREVIEW_LINES: usize = 200;
 
 // -- Diff background palette --------------------------------------------------
 //
@@ -78,11 +78,14 @@ const LIGHT_256_GUTTER_FG_IDX: u8 = 236;
 use crate::color::is_light;
 use crate::color::perceptual_distance;
 use crate::exec_command::relativize_to_home;
+use crate::render::Insets;
 use crate::render::highlight::DiffScopeBackgroundRgbs;
 use crate::render::highlight::diff_scope_background_rgbs;
 use crate::render::highlight::exceeds_highlight_limits;
 use crate::render::highlight::highlight_code_to_styled_spans;
 use crate::render::line_utils::prefix_lines;
+use crate::render::renderable::ColumnRenderable;
+use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
 use crate::terminal_palette::StdoutColorLevel;
 use crate::terminal_palette::XTERM_COLORS;
@@ -292,50 +295,51 @@ fn quantize_rgb_to_ansi256(target: (u8, u8, u8)) -> Color {
 
 pub struct DiffSummary {
     changes: HashMap<PathBuf, FileChange>,
-    cwd: PathBuf,
-}
-
-struct DiffSummaryRenderable {
-    changes: HashMap<PathBuf, FileChange>,
-    cwd: PathBuf,
+    cwd: AbsolutePathBuf,
 }
 
 impl DiffSummary {
-    pub fn new(changes: HashMap<PathBuf, FileChange>, cwd: PathBuf) -> Self {
+    pub fn new(changes: HashMap<PathBuf, FileChange>, cwd: AbsolutePathBuf) -> Self {
         Self { changes, cwd }
     }
 }
 
 impl Renderable for FileChange {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let lines = render_single_change_lines(self, area.width as usize, /*lang*/ None);
+        let mut lines = vec![];
+        render_change(self, &mut lines, area.width as usize, /*lang*/ None);
         Paragraph::new(lines).render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        let lines = render_single_change_lines(self, width as usize, /*lang*/ None);
-        lines.len() as u16
-    }
-}
-
-impl Renderable for DiffSummaryRenderable {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        let lines = render_diff_summary_lines(&self.changes, &self.cwd, area.width as usize);
-        Paragraph::new(lines).render(area, buf);
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        let lines = render_diff_summary_lines(&self.changes, &self.cwd, width as usize);
+        let mut lines = vec![];
+        render_change(self, &mut lines, width as usize, /*lang*/ None);
         lines.len() as u16
     }
 }
 
 impl From<DiffSummary> for Box<dyn Renderable> {
     fn from(val: DiffSummary) -> Self {
-        Box::new(DiffSummaryRenderable {
-            changes: val.changes,
-            cwd: val.cwd,
-        })
+        let mut rows: Vec<Box<dyn Renderable>> = vec![];
+
+        for (i, row) in collect_rows(&val.changes).into_iter().enumerate() {
+            if i > 0 {
+                rows.push(Box::new(RtLine::from("")));
+            }
+            let mut path = RtLine::from(display_path_for(&row.path, val.cwd.as_path()));
+            path.push_span(" ");
+            path.extend(render_line_count_summary(row.added, row.removed));
+            rows.push(Box::new(path));
+            rows.push(Box::new(RtLine::from("")));
+            rows.push(Box::new(InsetRenderable::new(
+                Box::new(row.change) as Box<dyn Renderable>,
+                Insets::tlbr(
+                    /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
+                ),
+            )));
+        }
+
+        Box::new(ColumnRenderable::with(rows))
     }
 }
 
@@ -346,64 +350,6 @@ pub(crate) fn create_diff_summary(
 ) -> Vec<RtLine<'static>> {
     let rows = collect_rows(changes);
     render_changes_block(rows, wrap_cols, cwd)
-}
-
-fn truncation_notice_line(indent: &str) -> RtLine<'static> {
-    RtLine::from(vec![
-        indent.to_string().into(),
-        format!("… diff truncated after {MAX_DIFF_PREVIEW_LINES} lines").dim(),
-    ])
-}
-
-fn truncate_diff_preview_lines(lines: &mut Vec<RtLine<'static>>, indent: &str) {
-    if lines.len() <= MAX_DIFF_PREVIEW_LINES {
-        return;
-    }
-
-    let keep = MAX_DIFF_PREVIEW_LINES.saturating_sub(1);
-    lines.truncate(keep);
-    lines.push(truncation_notice_line(indent));
-}
-
-fn render_single_change_lines(
-    change: &FileChange,
-    wrap_cols: usize,
-    lang: Option<&str>,
-) -> Vec<RtLine<'static>> {
-    let mut lines = vec![];
-    render_change(change, &mut lines, wrap_cols, lang);
-    truncate_diff_preview_lines(&mut lines, "");
-    lines
-}
-
-fn render_diff_summary_lines(
-    changes: &HashMap<PathBuf, FileChange>,
-    cwd: &Path,
-    wrap_cols: usize,
-) -> Vec<RtLine<'static>> {
-    let mut out: Vec<RtLine<'static>> = Vec::new();
-
-    for (i, row) in collect_rows(changes).into_iter().enumerate() {
-        if i > 0 {
-            out.push("".into());
-        }
-        let mut path = RtLine::from(display_path_for(&row.path, cwd));
-        path.push_span(" ");
-        path.extend(render_line_count_summary(row.added, row.removed));
-        out.push(path);
-        out.push("".into());
-
-        let lang = detect_lang_for_path(row.move_path.as_deref().unwrap_or(&row.path));
-        let diff_lines =
-            render_single_change_lines(&row.change, wrap_cols.saturating_sub(2), lang.as_deref());
-        out.extend(prefix_lines(diff_lines, "  ".into(), "  ".into()));
-        if out.len() > MAX_DIFF_PREVIEW_LINES {
-            break;
-        }
-    }
-
-    truncate_diff_preview_lines(&mut out, "  ");
-    out
 }
 
 // Shared row for per-file presentation
@@ -510,15 +456,11 @@ fn render_changes_block(rows: Vec<Row>, wrap_cols: usize, cwd: &Path) -> Vec<RtL
         // diff content reflects the new file, not the old one.
         let lang_path = r.move_path.as_deref().unwrap_or(&r.path);
         let lang = detect_lang_for_path(lang_path);
-        let lines =
-            render_single_change_lines(&r.change, wrap_cols.saturating_sub(4), lang.as_deref());
+        let mut lines = vec![];
+        render_change(&r.change, &mut lines, wrap_cols - 4, lang.as_deref());
         out.extend(prefix_lines(lines, "    ".into(), "    ".into()));
-        if out.len() > MAX_DIFF_PREVIEW_LINES {
-            break;
-        }
     }
 
-    truncate_diff_preview_lines(&mut out, "  ");
     out
 }
 
@@ -1418,13 +1360,6 @@ mod tests {
         create_diff_summary(changes, &PathBuf::from("/"), /*wrap_cols*/ 80)
     }
 
-    fn line_text(line: &RtLine<'static>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>()
-    }
-
     fn snapshot_lines(name: &str, lines: Vec<RtLine<'static>>, width: u16, height: u16) {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
         terminal
@@ -2293,79 +2228,10 @@ mod tests {
         assert!(detect_lang_for_path(Path::new("foo.rs")).is_some());
         assert!(detect_lang_for_path(Path::new("bar.py")).is_some());
         assert!(detect_lang_for_path(Path::new("app.tsx")).is_some());
-        assert!(detect_lang_for_path(Path::new("Main.fun")).is_some());
 
         // Extensionless files return None.
         assert!(detect_lang_for_path(Path::new("Makefile")).is_none());
         assert!(detect_lang_for_path(Path::new("randomfile")).is_none());
-    }
-
-    #[test]
-    fn create_diff_summary_truncates_long_previews() {
-        let content = (1..=260)
-            .map(|idx| format!("line {idx}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut changes: HashMap<PathBuf, FileChange> = HashMap::new();
-        changes.insert(
-            PathBuf::from("huge.txt"),
-            FileChange::Add {
-                content: format!("{content}\n"),
-            },
-        );
-
-        let lines = create_diff_summary(&changes, &PathBuf::from("/"), /*wrap_cols*/ 80);
-        assert_eq!(lines.len(), MAX_DIFF_PREVIEW_LINES);
-        assert!(
-            line_text(lines.last().expect("truncation marker"))
-                .contains("diff truncated after 200 lines")
-        );
-    }
-
-    #[test]
-    fn render_diff_summary_lines_truncates_long_previews() {
-        let content = (1..=260)
-            .map(|idx| format!("const value{idx} = {idx};"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut changes: HashMap<PathBuf, FileChange> = HashMap::new();
-        changes.insert(
-            PathBuf::from("huge.ts"),
-            FileChange::Add {
-                content: format!("{content}\n"),
-            },
-        );
-
-        let lines = render_diff_summary_lines(&changes, &PathBuf::from("/"), /*wrap_cols*/ 80);
-        assert_eq!(lines.len(), MAX_DIFF_PREVIEW_LINES);
-        assert!(
-            line_text(lines.last().expect("truncation marker"))
-                .contains("diff truncated after 200 lines")
-        );
-    }
-
-    #[test]
-    fn diff_summary_renderable_uses_path_extension_for_highlighting() {
-        let mut changes: HashMap<PathBuf, FileChange> = HashMap::new();
-        changes.insert(
-            PathBuf::from("dummy-example.ts"),
-            FileChange::Add {
-                content: "type DummyMetric = {\n  name: string;\n};\n".to_string(),
-            },
-        );
-
-        let renderable: Box<dyn Renderable> = DiffSummary::new(changes, PathBuf::from("/")).into();
-        let area = Rect::new(0, 0, 80, renderable.desired_height(80));
-        let mut buf = Buffer::empty(area);
-        renderable.render(area, &mut buf);
-
-        let has_rgb = (0..area.height).any(|y| {
-            (0..area.width).any(|x| matches!(buf[(x, y)].fg, ratatui::style::Color::Rgb(..)))
-        });
-        assert!(
-            has_rgb,
-            "diff summary renderable for .ts file should preserve syntax-highlighted cells"
-        );
     }
 
     #[test]

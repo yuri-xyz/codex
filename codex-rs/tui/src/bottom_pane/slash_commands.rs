@@ -10,58 +10,22 @@ use codex_utils_fuzzy_match::fuzzy_match;
 use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 
-const HIDDEN_VISIBLE_COMMANDS: &[SlashCommand] = &[SlashCommand::Plan];
-
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BuiltinCommandFlags {
     pub(crate) collaboration_modes_enabled: bool,
     pub(crate) connectors_enabled: bool,
+    pub(crate) plugins_command_enabled: bool,
     pub(crate) fast_command_enabled: bool,
+    pub(crate) goal_command_enabled: bool,
     pub(crate) personality_command_enabled: bool,
     pub(crate) realtime_conversation_enabled: bool,
     pub(crate) audio_device_selection_enabled: bool,
     pub(crate) allow_elevate_sandbox: bool,
+    pub(crate) side_conversation_active: bool,
 }
 
 /// Return the built-ins that should be visible/usable for the current input.
 pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static str, SlashCommand)> {
-    dispatchable_builtins_for_input(flags)
-        .into_iter()
-        .filter(|(_, cmd)| !HIDDEN_VISIBLE_COMMANDS.contains(cmd))
-        .collect()
-}
-
-/// Find a single built-in command by exact name, after applying the gating rules.
-pub(crate) fn find_builtin_command(name: &str, flags: BuiltinCommandFlags) -> Option<SlashCommand> {
-    let cmd = SlashCommand::from_str(name).ok()?;
-    dispatchable_builtins_for_input(flags)
-        .into_iter()
-        .any(|(_, visible_cmd)| visible_cmd == cmd)
-        .then_some(cmd)
-}
-
-/// Whether any visible built-in fuzzily matches the provided prefix.
-pub(crate) fn has_builtin_prefix(name: &str, flags: BuiltinCommandFlags) -> bool {
-    let visible_commands = builtins_for_input(flags);
-    if HIDDEN_VISIBLE_COMMANDS
-        .iter()
-        .map(|command| command.command())
-        .any(|command_name| command_name.starts_with(name))
-        && !visible_commands
-            .iter()
-            .any(|(command_name, _)| command_name.starts_with(name))
-    {
-        return false;
-    }
-
-    visible_commands
-        .into_iter()
-        .any(|(command_name, _)| fuzzy_match(command_name, name).is_some())
-}
-
-fn dispatchable_builtins_for_input(
-    flags: BuiltinCommandFlags,
-) -> Vec<(&'static str, SlashCommand)> {
     built_in_slash_commands()
         .into_iter()
         .filter(|(_, cmd)| flags.allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
@@ -70,11 +34,36 @@ fn dispatchable_builtins_for_input(
                 || !matches!(*cmd, SlashCommand::Collab | SlashCommand::Plan)
         })
         .filter(|(_, cmd)| flags.connectors_enabled || *cmd != SlashCommand::Apps)
+        .filter(|(_, cmd)| flags.plugins_command_enabled || *cmd != SlashCommand::Plugins)
         .filter(|(_, cmd)| flags.fast_command_enabled || *cmd != SlashCommand::Fast)
+        .filter(|(_, cmd)| flags.goal_command_enabled || *cmd != SlashCommand::Goal)
         .filter(|(_, cmd)| flags.personality_command_enabled || *cmd != SlashCommand::Personality)
         .filter(|(_, cmd)| flags.realtime_conversation_enabled || *cmd != SlashCommand::Realtime)
         .filter(|(_, cmd)| flags.audio_device_selection_enabled || *cmd != SlashCommand::Settings)
+        .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
         .collect()
+}
+
+/// Find a single built-in command by exact name, after applying feature gating.
+///
+/// Side-conversation gating is intentionally enforced by dispatch rather than exact lookup so a
+/// typed command can produce a side-specific unavailable message while the popup still hides it.
+pub(crate) fn find_builtin_command(name: &str, flags: BuiltinCommandFlags) -> Option<SlashCommand> {
+    let cmd = SlashCommand::from_str(name).ok()?;
+    builtins_for_input(BuiltinCommandFlags {
+        side_conversation_active: false,
+        ..flags
+    })
+    .into_iter()
+    .any(|(_, visible_cmd)| visible_cmd == cmd)
+    .then_some(cmd)
+}
+
+/// Whether any visible built-in fuzzily matches the provided prefix.
+pub(crate) fn has_builtin_prefix(name: &str, flags: BuiltinCommandFlags) -> bool {
+    builtins_for_input(flags)
+        .into_iter()
+        .any(|(command_name, _)| fuzzy_match(command_name, name).is_some())
 }
 
 #[cfg(test)]
@@ -86,11 +75,14 @@ mod tests {
         BuiltinCommandFlags {
             collaboration_modes_enabled: true,
             connectors_enabled: true,
+            plugins_command_enabled: true,
             fast_command_enabled: true,
+            goal_command_enabled: true,
             personality_command_enabled: true,
             realtime_conversation_enabled: true,
             audio_device_selection_enabled: true,
             allow_elevate_sandbox: true,
+            side_conversation_active: false,
         }
     }
 
@@ -132,6 +124,13 @@ mod tests {
     }
 
     #[test]
+    fn goal_command_is_hidden_when_disabled() {
+        let mut flags = all_enabled_flags();
+        flags.goal_command_enabled = false;
+        assert_eq!(find_builtin_command("goal", flags), None);
+    }
+
+    #[test]
     fn realtime_command_is_hidden_when_realtime_is_disabled() {
         let mut flags = all_enabled_flags();
         flags.realtime_conversation_enabled = false;
@@ -154,24 +153,37 @@ mod tests {
     }
 
     #[test]
-    fn plan_command_stays_dispatchable_when_typed_directly() {
+    fn side_conversation_hides_commands_without_side_flag() {
+        let commands = builtins_for_input(BuiltinCommandFlags {
+            side_conversation_active: true,
+            ..all_enabled_flags()
+        })
+        .into_iter()
+        .map(|(_, command)| command)
+        .collect::<Vec<_>>();
+
         assert_eq!(
-            find_builtin_command("plan", all_enabled_flags()),
-            Some(SlashCommand::Plan)
+            commands,
+            vec![
+                SlashCommand::Copy,
+                SlashCommand::Diff,
+                SlashCommand::Mention,
+                SlashCommand::Status,
+            ]
         );
     }
 
     #[test]
-    fn plan_command_is_hidden_from_visible_command_list() {
-        let names: Vec<_> = builtins_for_input(all_enabled_flags())
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        assert!(!names.contains(&"plan"));
-    }
-
-    #[test]
-    fn plan_command_is_hidden_from_prefix_matching() {
-        assert!(!has_builtin_prefix("plan", all_enabled_flags()));
+    fn side_conversation_exact_lookup_still_resolves_hidden_commands_for_dispatch_error() {
+        assert_eq!(
+            find_builtin_command(
+                "review",
+                BuiltinCommandFlags {
+                    side_conversation_active: true,
+                    ..all_enabled_flags()
+                },
+            ),
+            Some(SlashCommand::Review)
+        );
     }
 }

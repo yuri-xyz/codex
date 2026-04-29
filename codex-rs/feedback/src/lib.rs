@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::collections::btree_map::Entry;
 use std::fs;
 use std::io::Write;
 use std::io::{self};
@@ -8,9 +9,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::Result;
+use anyhow::anyhow;
+use codex_login::AuthEnvTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
-use feedback_diagnostics::FeedbackDiagnostics;
 use tracing::Event;
 use tracing::field::Visit;
 use tracing_subscriber::Layer;
@@ -18,11 +20,136 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::registry::LookupSpan;
 
-pub mod feedback_diagnostics;
+pub(crate) mod feedback_diagnostics;
+pub use feedback_diagnostics::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
+pub use feedback_diagnostics::FeedbackDiagnostic;
+pub use feedback_diagnostics::FeedbackDiagnostics;
 
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 const FEEDBACK_TAGS_TARGET: &str = "feedback_tags";
 const MAX_FEEDBACK_TAGS: usize = 64;
+
+/// Structured request/auth fields that should be attached to feedback uploads.
+pub struct FeedbackRequestTags<'a> {
+    pub endpoint: &'a str,
+    pub auth_header_attached: bool,
+    pub auth_header_name: Option<&'a str>,
+    pub auth_mode: Option<&'a str>,
+    pub auth_retry_after_unauthorized: Option<bool>,
+    pub auth_recovery_mode: Option<&'a str>,
+    pub auth_recovery_phase: Option<&'a str>,
+    pub auth_connection_reused: Option<bool>,
+    pub auth_request_id: Option<&'a str>,
+    pub auth_cf_ray: Option<&'a str>,
+    pub auth_error: Option<&'a str>,
+    pub auth_error_code: Option<&'a str>,
+    pub auth_recovery_followup_success: Option<bool>,
+    pub auth_recovery_followup_status: Option<u16>,
+}
+
+struct FeedbackRequestSnapshot<'a> {
+    endpoint: &'a str,
+    auth_header_attached: bool,
+    auth_header_name: &'a str,
+    auth_mode: &'a str,
+    auth_retry_after_unauthorized: String,
+    auth_recovery_mode: &'a str,
+    auth_recovery_phase: &'a str,
+    auth_connection_reused: String,
+    auth_request_id: &'a str,
+    auth_cf_ray: &'a str,
+    auth_error: &'a str,
+    auth_error_code: &'a str,
+    auth_recovery_followup_success: String,
+    auth_recovery_followup_status: String,
+}
+
+impl<'a> FeedbackRequestSnapshot<'a> {
+    fn from_tags(tags: &'a FeedbackRequestTags<'a>) -> Self {
+        Self {
+            endpoint: tags.endpoint,
+            auth_header_attached: tags.auth_header_attached,
+            auth_header_name: tags.auth_header_name.unwrap_or(""),
+            auth_mode: tags.auth_mode.unwrap_or(""),
+            auth_retry_after_unauthorized: tags
+                .auth_retry_after_unauthorized
+                .map_or_else(String::new, |value| value.to_string()),
+            auth_recovery_mode: tags.auth_recovery_mode.unwrap_or(""),
+            auth_recovery_phase: tags.auth_recovery_phase.unwrap_or(""),
+            auth_connection_reused: tags
+                .auth_connection_reused
+                .map_or_else(String::new, |value| value.to_string()),
+            auth_request_id: tags.auth_request_id.unwrap_or(""),
+            auth_cf_ray: tags.auth_cf_ray.unwrap_or(""),
+            auth_error: tags.auth_error.unwrap_or(""),
+            auth_error_code: tags.auth_error_code.unwrap_or(""),
+            auth_recovery_followup_success: tags
+                .auth_recovery_followup_success
+                .map_or_else(String::new, |value| value.to_string()),
+            auth_recovery_followup_status: tags
+                .auth_recovery_followup_status
+                .map_or_else(String::new, |value| value.to_string()),
+        }
+    }
+}
+
+pub fn emit_feedback_request_tags(tags: &FeedbackRequestTags<'_>) {
+    let snapshot = FeedbackRequestSnapshot::from_tags(tags);
+    tracing::info!(
+        target: FEEDBACK_TAGS_TARGET,
+        endpoint = tracing::field::debug(snapshot.endpoint),
+        auth_header_attached = tracing::field::debug(snapshot.auth_header_attached),
+        auth_header_name = tracing::field::debug(snapshot.auth_header_name),
+        auth_mode = tracing::field::debug(snapshot.auth_mode),
+        auth_retry_after_unauthorized = tracing::field::debug(&snapshot.auth_retry_after_unauthorized),
+        auth_recovery_mode = tracing::field::debug(snapshot.auth_recovery_mode),
+        auth_recovery_phase = tracing::field::debug(snapshot.auth_recovery_phase),
+        auth_connection_reused = tracing::field::debug(&snapshot.auth_connection_reused),
+        auth_request_id = tracing::field::debug(snapshot.auth_request_id),
+        auth_cf_ray = tracing::field::debug(snapshot.auth_cf_ray),
+        auth_error = tracing::field::debug(snapshot.auth_error),
+        auth_error_code = tracing::field::debug(snapshot.auth_error_code),
+        auth_recovery_followup_success = tracing::field::debug(&snapshot.auth_recovery_followup_success),
+        auth_recovery_followup_status = tracing::field::debug(&snapshot.auth_recovery_followup_status),
+    );
+}
+
+pub fn emit_feedback_request_tags_with_auth_env(
+    tags: &FeedbackRequestTags<'_>,
+    auth_env: &AuthEnvTelemetry,
+) {
+    let snapshot = FeedbackRequestSnapshot::from_tags(tags);
+    tracing::info!(
+        target: FEEDBACK_TAGS_TARGET,
+        endpoint = tracing::field::debug(snapshot.endpoint),
+        auth_header_attached = tracing::field::debug(snapshot.auth_header_attached),
+        auth_header_name = tracing::field::debug(snapshot.auth_header_name),
+        auth_mode = tracing::field::debug(snapshot.auth_mode),
+        auth_retry_after_unauthorized = tracing::field::debug(&snapshot.auth_retry_after_unauthorized),
+        auth_recovery_mode = tracing::field::debug(snapshot.auth_recovery_mode),
+        auth_recovery_phase = tracing::field::debug(snapshot.auth_recovery_phase),
+        auth_connection_reused = tracing::field::debug(&snapshot.auth_connection_reused),
+        auth_request_id = tracing::field::debug(snapshot.auth_request_id),
+        auth_cf_ray = tracing::field::debug(snapshot.auth_cf_ray),
+        auth_error = tracing::field::debug(snapshot.auth_error),
+        auth_error_code = tracing::field::debug(snapshot.auth_error_code),
+        auth_recovery_followup_success = tracing::field::debug(&snapshot.auth_recovery_followup_success),
+        auth_recovery_followup_status = tracing::field::debug(&snapshot.auth_recovery_followup_status),
+        auth_env_openai_api_key_present = tracing::field::debug(auth_env.openai_api_key_env_present),
+        auth_env_codex_api_key_present = tracing::field::debug(auth_env.codex_api_key_env_present),
+        auth_env_codex_api_key_enabled = tracing::field::debug(auth_env.codex_api_key_env_enabled),
+        // Custom provider `env_key` is arbitrary config text, so emit only a safe bucket.
+        auth_env_provider_key_name = tracing::field::debug(
+            auth_env.provider_env_key_name.as_deref().unwrap_or("")
+        ),
+        auth_env_provider_key_present = tracing::field::debug(
+            &auth_env.provider_env_key_present.map_or_else(String::new, |value| value.to_string())
+        ),
+        auth_env_refresh_token_url_override_present = tracing::field::debug(
+            auth_env.refresh_token_url_override_present
+        ),
+    );
+}
 
 #[derive(Clone)]
 pub struct CodexFeedback {
@@ -66,6 +193,8 @@ impl CodexFeedback {
             .with_timer(tracing_subscriber::fmt::time::SystemTime)
             .with_ansi(false)
             .with_target(false)
+            // Capture everything, regardless of the caller's `RUST_LOG`, so feedback includes the
+            // full trace when the user uploads a report.
             .with_filter(LevelFilter::OFF)
     }
 
@@ -96,7 +225,7 @@ impl CodexFeedback {
         };
         FeedbackSnapshot {
             bytes,
-            _tags: tags,
+            tags,
             feedback_diagnostics: FeedbackDiagnostics::collect_from_env(),
             thread_id: session_id
                 .map(|id| id.to_string())
@@ -199,9 +328,26 @@ impl RingBuffer {
 
 pub struct FeedbackSnapshot {
     bytes: Vec<u8>,
-    _tags: BTreeMap<String, String>,
+    tags: BTreeMap<String, String>,
     feedback_diagnostics: FeedbackDiagnostics,
     pub thread_id: String,
+}
+
+pub struct FeedbackUploadOptions<'a> {
+    pub classification: &'a str,
+    pub reason: Option<&'a str>,
+    pub tags: Option<&'a BTreeMap<String, String>>,
+    pub include_logs: bool,
+    pub extra_attachment_paths: &'a [PathBuf],
+    pub session_source: Option<SessionSource>,
+    pub logs_override: Option<Vec<u8>>,
+}
+
+#[allow(dead_code)]
+struct FeedbackAttachment {
+    buffer: Vec<u8>,
+    filename: String,
+    content_type: Option<String>,
 }
 
 impl FeedbackSnapshot {
@@ -234,18 +380,119 @@ impl FeedbackSnapshot {
         Ok(path)
     }
 
-    /// Feedback uploads are disabled in telemetry-free builds.
-    pub fn upload_feedback(
+    /// Upload feedback with optional attachments.
+    pub fn upload_feedback(&self, options: FeedbackUploadOptions<'_>) -> Result<()> {
+        let _ = self.upload_tags(
+            options.classification,
+            options.reason,
+            options.tags,
+            options.session_source.as_ref(),
+        );
+        let _ = self.feedback_attachments(
+            options.include_logs,
+            options.extra_attachment_paths,
+            options.logs_override,
+        );
+        Err(anyhow!("feedback reporting is disabled in this build"))
+    }
+
+    fn upload_tags(
         &self,
-        _classification: &str,
-        _reason: Option<&str>,
-        _include_logs: bool,
-        _extra_attachment_paths: &[PathBuf],
-        _session_source: Option<SessionSource>,
-        _logs_override: Option<Vec<u8>>,
-    ) -> Result<()> {
-        tracing::info!("feedback upload skipped: telemetry-disabled build");
-        Ok(())
+        classification: &str,
+        reason: Option<&str>,
+        client_tags: Option<&BTreeMap<String, String>>,
+        session_source: Option<&SessionSource>,
+    ) -> BTreeMap<String, String> {
+        let cli_version = env!("CARGO_PKG_VERSION");
+        let mut tags = BTreeMap::from([
+            (String::from("thread_id"), self.thread_id.to_string()),
+            (String::from("classification"), classification.to_string()),
+            (String::from("cli_version"), cli_version.to_string()),
+        ]);
+        if let Some(source) = session_source {
+            tags.insert(String::from("session_source"), source.to_string());
+        }
+        if let Some(r) = reason {
+            tags.insert(String::from("reason"), r.to_string());
+        }
+
+        let reserved = [
+            "thread_id",
+            "classification",
+            "cli_version",
+            "session_source",
+            "reason",
+        ];
+        if let Some(client_tags) = client_tags {
+            for (key, value) in client_tags {
+                if reserved.contains(&key.as_str()) {
+                    continue;
+                }
+                if let Entry::Vacant(entry) = tags.entry(key.clone()) {
+                    entry.insert(value.clone());
+                }
+            }
+        }
+        for (key, value) in &self.tags {
+            if reserved.contains(&key.as_str()) {
+                continue;
+            }
+            if let Entry::Vacant(entry) = tags.entry(key.clone()) {
+                entry.insert(value.clone());
+            }
+        }
+
+        tags
+    }
+
+    fn feedback_attachments(
+        &self,
+        include_logs: bool,
+        extra_attachment_paths: &[PathBuf],
+        logs_override: Option<Vec<u8>>,
+    ) -> Vec<FeedbackAttachment> {
+        let mut attachments = Vec::new();
+
+        if include_logs {
+            attachments.push(FeedbackAttachment {
+                buffer: logs_override.unwrap_or_else(|| self.bytes.clone()),
+                filename: String::from("codex-logs.log"),
+                content_type: Some("text/plain".to_string()),
+            });
+        }
+
+        if let Some(text) = self.feedback_diagnostics_attachment_text(include_logs) {
+            attachments.push(FeedbackAttachment {
+                buffer: text.into_bytes(),
+                filename: FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME.to_string(),
+                content_type: Some("text/plain".to_string()),
+            });
+        }
+
+        for path in extra_attachment_paths {
+            let data = match fs::read(path) {
+                Ok(data) => data,
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        "failed to read log attachment; skipping"
+                    );
+                    continue;
+                }
+            };
+            let filename = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "extra-log.log".to_string());
+            attachments.push(FeedbackAttachment {
+                buffer: data,
+                filename,
+                content_type: Some("text/plain".to_string()),
+            });
+        }
+
+        attachments
     }
 }
 
@@ -325,7 +572,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use feedback_diagnostics::FeedbackDiagnostic;
+    use crate::FeedbackDiagnostic;
     use pretty_assertions::assert_eq;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -344,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_layer_records_tags_from_feedback_target() {
+    fn metadata_layer_is_disabled_in_fork_build() {
         let fb = CodexFeedback::new();
         let _guard = tracing_subscriber::registry()
             .with(fb.metadata_layer())
@@ -353,8 +600,7 @@ mod tests {
         tracing::info!(target: FEEDBACK_TAGS_TARGET, model = "gpt-5", cached = true, "tags");
 
         let snap = fb.snapshot(/*session_id*/ None);
-        pretty_assertions::assert_eq!(snap.tags.get("model").map(String::as_str), Some("gpt-5"));
-        pretty_assertions::assert_eq!(snap.tags.get("cached").map(String::as_str), Some("true"));
+        assert!(snap.tags.is_empty());
     }
 
     #[test]
@@ -366,8 +612,9 @@ mod tests {
         let snapshot_with_diagnostics = CodexFeedback::new()
             .snapshot(/*session_id*/ None)
             .with_feedback_diagnostics(FeedbackDiagnostics::new(vec![FeedbackDiagnostic {
-                headline: "OPENAI_BASE_URL is set and may affect connectivity.".to_string(),
-                details: vec!["OPENAI_BASE_URL = https://example.com/v1".to_string()],
+                headline: "Proxy environment variables are set and may affect connectivity."
+                    .to_string(),
+                details: vec!["HTTPS_PROXY = https://example.com:443".to_string()],
             }]));
 
         let attachments_with_diagnostics = snapshot_with_diagnostics.feedback_attachments(
@@ -390,7 +637,7 @@ mod tests {
         assert_eq!(attachments_with_diagnostics[0].buffer, vec![1]);
         assert_eq!(
             attachments_with_diagnostics[1].buffer,
-            b"Connectivity diagnostics\n\n- OPENAI_BASE_URL is set and may affect connectivity.\n  - OPENAI_BASE_URL = https://example.com/v1".to_vec()
+            b"Connectivity diagnostics\n\n- Proxy environment variables are set and may affect connectivity.\n  - HTTPS_PROXY = https://example.com:443".to_vec()
         );
         assert_eq!(attachments_with_diagnostics[2].buffer, b"rollout".to_vec());
         assert_eq!(
@@ -410,5 +657,76 @@ mod tests {
         );
         assert_eq!(attachments_without_diagnostics[0].buffer, vec![1]);
         fs::remove_file(extra_path).expect("extra attachment should be removed");
+    }
+
+    #[test]
+    fn upload_tags_include_client_tags_and_preserve_reserved_fields() {
+        let mut tags = BTreeMap::new();
+        tags.insert("thread_id".to_string(), "wrong-thread".to_string());
+        tags.insert("turn_id".to_string(), "wrong-turn".to_string());
+        tags.insert(
+            "classification".to_string(),
+            "wrong-classification".to_string(),
+        );
+        tags.insert("cli_version".to_string(), "wrong-version".to_string());
+        tags.insert("session_source".to_string(), "wrong-source".to_string());
+        tags.insert("reason".to_string(), "wrong-reason".to_string());
+        tags.insert("model".to_string(), "gpt-5".to_string());
+        let snapshot = FeedbackSnapshot {
+            bytes: Vec::new(),
+            tags,
+            feedback_diagnostics: FeedbackDiagnostics::default(),
+            thread_id: "thread-123".to_string(),
+        };
+        let mut client_tags = BTreeMap::new();
+        client_tags.insert("thread_id".to_string(), "wrong-client-thread".to_string());
+        client_tags.insert("turn_id".to_string(), "turn-456".to_string());
+        client_tags.insert(
+            "classification".to_string(),
+            "wrong-client-classification".to_string(),
+        );
+        client_tags.insert(
+            "cli_version".to_string(),
+            "wrong-client-version".to_string(),
+        );
+        client_tags.insert(
+            "session_source".to_string(),
+            "wrong-client-source".to_string(),
+        );
+        client_tags.insert("reason".to_string(), "wrong-client-reason".to_string());
+        client_tags.insert("client_tag".to_string(), "from-client".to_string());
+
+        let upload_tags = snapshot.upload_tags(
+            "bug",
+            Some("actual reason"),
+            Some(&client_tags),
+            Some(&SessionSource::Cli),
+        );
+
+        assert_eq!(
+            upload_tags.get("thread_id").map(String::as_str),
+            Some("thread-123")
+        );
+        assert_eq!(
+            upload_tags.get("turn_id").map(String::as_str),
+            Some("turn-456")
+        );
+        assert_eq!(
+            upload_tags.get("classification").map(String::as_str),
+            Some("bug")
+        );
+        assert_eq!(
+            upload_tags.get("session_source").map(String::as_str),
+            Some("cli")
+        );
+        assert_eq!(
+            upload_tags.get("reason").map(String::as_str),
+            Some("actual reason")
+        );
+        assert_eq!(
+            upload_tags.get("client_tag").map(String::as_str),
+            Some("from-client")
+        );
+        assert_eq!(upload_tags.get("model").map(String::as_str), Some("gpt-5"));
     }
 }

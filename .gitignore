@@ -52,6 +52,8 @@ yarn-error.log*
 # env
 .env*
 !.env.example
+!.envrc
+.venv/
 
 # package
 *.tgz
@@ -86,9 +88,7 @@ CHANGELOG.ignore.md
 
 # nix related
 .direnv
-.envrc
 
 # Python bytecode files
 __pycache__/
 *.pyc
-

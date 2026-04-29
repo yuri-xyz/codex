@@ -63,7 +63,7 @@ fn syntax_set() -> &'static SyntaxSet {
 }
 
 fn build_syntax_set() -> SyntaxSet {
-    let mut builder = two_face::syntax::extra_newlines().clone().into_builder();
+    let mut builder = two_face::syntax::extra_newlines().into_builder();
     add_embedded_syntax(&mut builder, FUNKTION_SYNTAX, "Funktion");
     builder.build()
 }

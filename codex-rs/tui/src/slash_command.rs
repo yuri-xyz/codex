@@ -16,11 +16,15 @@ pub enum SlashCommand {
     Fast,
     Approvals,
     Permissions,
+    Keymap,
     #[strum(serialize = "setup-default-sandbox")]
     ElevateSandbox,
     #[strum(serialize = "sandbox-add-read-dir")]
     SandboxReadRoot,
     Experimental,
+    #[strum(to_string = "autoreview")]
+    AutoReview,
+    Memories,
     Skills,
     Review,
     Rename,
@@ -30,10 +34,14 @@ pub enum SlashCommand {
     Init,
     Compact,
     Plan,
+    Goal,
     Collab,
     Agent,
+    Side,
     // Undo,
     Copy,
+    Diff,
+    Mention,
     Status,
     DebugConfig,
     Title,
@@ -41,9 +49,12 @@ pub enum SlashCommand {
     Theme,
     Mcp,
     Apps,
+    Plugins,
     Logout,
     Quit,
     Exit,
+    Feedback,
+    Rollout,
     Ps,
     #[strum(to_string = "stop", serialize = "clean")]
     Stop,
@@ -51,6 +62,7 @@ pub enum SlashCommand {
     Personality,
     Realtime,
     Settings,
+    TestApproval,
     #[strum(serialize = "subagents")]
     MultiAgents,
     // Debugging commands.
@@ -64,6 +76,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
@@ -74,7 +87,9 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
-            SlashCommand::Copy => "copy the latest Codex output to your clipboard",
+            SlashCommand::Copy => "copy last response as markdown",
+            SlashCommand::Diff => "show git diff (including untracked files)",
+            SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
@@ -86,23 +101,33 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Fast => "toggle Fast mode to enable fastest inference at 2X plan usage",
+            SlashCommand::Fast => {
+                "toggle Fast mode to enable fastest inference with increased plan usage"
+            }
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
+            SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
+            SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
+            SlashCommand::Keymap => "remap TUI shortcuts",
             SlashCommand::ElevateSandbox => "set up elevated agent sandbox",
             SlashCommand::SandboxReadRoot => {
                 "let sandbox read a directory: /sandbox-add-read-dir <absolute_path>"
             }
             SlashCommand::Experimental => "toggle experimental features",
-            SlashCommand::Mcp => "list configured MCP tools",
+            SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
+            SlashCommand::Memories => "configure memory use and generation",
+            SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
             SlashCommand::Apps => "manage apps",
+            SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Codex",
+            SlashCommand::Rollout => "print the rollout file path",
+            SlashCommand::TestApproval => "test approval request",
         }
     }
 
@@ -119,8 +144,20 @@ impl SlashCommand {
             SlashCommand::Review
                 | SlashCommand::Rename
                 | SlashCommand::Plan
+                | SlashCommand::Goal
                 | SlashCommand::Fast
+                | SlashCommand::Mcp
+                | SlashCommand::Side
+                | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+        )
+    }
+
+    /// Whether this command remains available inside an active side conversation.
+    pub fn available_in_side_conversation(self) -> bool {
+        matches!(
+            self,
+            SlashCommand::Copy | SlashCommand::Diff | SlashCommand::Mention | SlashCommand::Status
         )
     }
 
@@ -138,33 +175,44 @@ impl SlashCommand {
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions
+            | SlashCommand::Keymap
             | SlashCommand::ElevateSandbox
             | SlashCommand::SandboxReadRoot
             | SlashCommand::Experimental
+            | SlashCommand::Memories
             | SlashCommand::Review
             | SlashCommand::Plan
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
-            SlashCommand::Copy
+            SlashCommand::Diff
+            | SlashCommand::Copy
             | SlashCommand::Rename
+            | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
+            | SlashCommand::Goal
             | SlashCommand::Mcp
             | SlashCommand::Apps
+            | SlashCommand::Plugins
+            | SlashCommand::Title
+            | SlashCommand::Statusline
+            | SlashCommand::AutoReview
+            | SlashCommand::Feedback
             | SlashCommand::Quit
-            | SlashCommand::Exit => true,
+            | SlashCommand::Exit
+            | SlashCommand::Side => true,
+            SlashCommand::Rollout => true,
+            SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
             SlashCommand::Collab => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
-            SlashCommand::Statusline => false,
             SlashCommand::Theme => false,
-            SlashCommand::Title => false,
         }
     }
 
@@ -172,6 +220,7 @@ impl SlashCommand {
         match self {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),
+            SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
             _ => true,
         }
     }
@@ -200,5 +249,21 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
+    }
+
+    #[test]
+    fn certain_commands_are_available_during_task() {
+        assert!(SlashCommand::Goal.available_during_task());
+        assert!(SlashCommand::Title.available_during_task());
+        assert!(SlashCommand::Statusline.available_during_task());
+    }
+
+    #[test]
+    fn auto_review_command_is_autoreview() {
+        assert_eq!(SlashCommand::AutoReview.command(), "autoreview");
+        assert_eq!(
+            SlashCommand::from_str("autoreview"),
+            Ok(SlashCommand::AutoReview)
+        );
     }
 }

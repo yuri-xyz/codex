@@ -2,10 +2,10 @@ use anyhow::Result;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::DEFAULT_CLIENT_NAME;
 use app_test_support::write_chatgpt_auth;
+use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::OtelExporterKind;
 use codex_config::types::OtelHttpProtocol;
 use codex_core::config::ConfigBuilder;
-use codex_login::AuthCredentialsStoreMode;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -73,13 +73,13 @@ async fn app_server_default_analytics_enabled_with_flag() -> Result<()> {
     )
     .map_err(|err| anyhow::anyhow!(err.to_string()))?;
 
-    // With analytics unset in the config and the default flag is true, metrics are enabled.
+    // This fork disables OTEL analytics even when app-server's upstream default flag is true.
     let has_metrics = provider.as_ref().and_then(|otel| otel.metrics()).is_some();
-    assert_eq!(has_metrics, true);
+    assert_eq!(has_metrics, false);
     Ok(())
 }
 
-pub(crate) async fn enable_analytics_capture(server: &MockServer, codex_home: &Path) -> Result<()> {
+pub(crate) async fn mount_analytics_capture(server: &MockServer, codex_home: &Path) -> Result<()> {
     Mock::given(method("POST"))
         .and(path("/codex/analytics-events/events"))
         .respond_with(ResponseTemplate::new(200))
@@ -118,6 +118,41 @@ pub(crate) async fn wait_for_analytics_payload(
     })
     .await?;
     serde_json::from_slice(&body).map_err(|err| anyhow::anyhow!("invalid analytics payload: {err}"))
+}
+
+pub(crate) async fn wait_for_analytics_event(
+    server: &MockServer,
+    read_timeout: Duration,
+    event_type: &str,
+) -> Result<Value> {
+    timeout(read_timeout, async {
+        loop {
+            let Some(requests) = server.received_requests().await else {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                continue;
+            };
+            for request in &requests {
+                if request.method != "POST"
+                    || request.url.path() != "/codex/analytics-events/events"
+                {
+                    continue;
+                }
+                let payload: Value = serde_json::from_slice(&request.body)
+                    .map_err(|err| anyhow::anyhow!("invalid analytics payload: {err}"))?;
+                let Some(events) = payload["events"].as_array() else {
+                    continue;
+                };
+                if let Some(event) = events
+                    .iter()
+                    .find(|event| event["event_type"] == event_type)
+                {
+                    return Ok::<Value, anyhow::Error>(event.clone());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await?
 }
 
 pub(crate) fn thread_initialized_event(payload: &Value) -> Result<&Value> {

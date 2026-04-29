@@ -1,4 +1,11 @@
 use super::*;
+use codex_protocol::protocol::FileSystemAccessMode;
+use codex_protocol::protocol::FileSystemPath;
+use codex_protocol::protocol::FileSystemSandboxEntry;
+use codex_protocol::protocol::FileSystemSandboxKind;
+use codex_protocol::protocol::FileSystemSandboxPolicy;
+use codex_protocol::protocol::FileSystemSpecialPath;
+use codex_protocol::protocol::NetworkSandboxPolicy;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -16,8 +23,8 @@ async fn resumed_initial_messages_render_history() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: PathBuf::from("/home/user/project"),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -129,8 +136,8 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: PathBuf::from("/home/user/project"),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -190,8 +197,8 @@ async fn replayed_user_message_preserves_remote_image_urls() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: PathBuf::from("/home/user/project"),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -242,13 +249,33 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         .expect("set approval policy");
     chat.config
         .permissions
-        .sandbox_policy
-        .set(SandboxPolicy::new_workspace_write_policy())
-        .expect("set sandbox policy");
-    chat.config.cwd = PathBuf::from("/home/user/main").abs();
+        .set_permission_profile(PermissionProfile::workspace_write())
+        .expect("set permission profile");
+    chat.config.cwd = test_path_buf("/home/user/main").abs();
 
-    let expected_sandbox = SandboxPolicy::new_read_only_policy();
-    let expected_cwd = PathBuf::from("/home/user/sub-agent").abs();
+    let expected_cwd = test_path_buf("/home/user/sub-agent").abs();
+    let expected_file_system_policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::Root,
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::GlobPattern {
+                pattern: "**/.secret".to_string(),
+            },
+            access: FileSystemAccessMode::None,
+        },
+    ]);
+    let expected_permission_profile =
+        codex_protocol::models::PermissionProfile::from_runtime_permissions(
+            &expected_file_system_policy,
+            NetworkSandboxPolicy::Restricted,
+        );
+    let expected_sandbox = expected_permission_profile
+        .to_legacy_sandbox_policy(expected_cwd.as_path())
+        .expect("permission profile should project to legacy sandbox policy");
     let configured = codex_protocol::protocol::SessionConfiguredEvent {
         session_id: ThreadId::new(),
         forked_from_id: None,
@@ -258,8 +285,8 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: expected_sandbox.clone(),
-        cwd: expected_cwd.to_path_buf(),
+        permission_profile: expected_permission_profile.clone(),
+        cwd: expected_cwd.clone(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -278,10 +305,74 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         AskForApproval::Never
     );
     assert_eq!(
-        chat.config_ref().permissions.sandbox_policy.get(),
+        &chat.config_ref().legacy_sandbox_policy(),
         &expected_sandbox
     );
+    assert_eq!(
+        chat.config_ref().permissions.permission_profile(),
+        expected_permission_profile
+    );
     assert_eq!(&chat.config_ref().cwd, &expected_cwd);
+
+    let updated_profile = PermissionProfile::workspace_write();
+    chat.set_permission_profile(updated_profile.clone())
+        .expect("set permission profile");
+    assert_eq!(
+        chat.config_ref().permissions.permission_profile(),
+        updated_profile,
+        "local permission changes should replace SessionConfigured profile-derived runtime permissions"
+    );
+}
+
+#[tokio::test]
+async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let expected_permission_profile = PermissionProfile::External {
+        network: NetworkSandboxPolicy::Restricted,
+    };
+    let expected_sandbox = expected_permission_profile
+        .to_legacy_sandbox_policy(test_path_buf("/home/user/external").as_path())
+        .expect("external profile should project to legacy sandbox policy");
+    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+        session_id: ThreadId::new(),
+        forked_from_id: None,
+        thread_name: None,
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: expected_permission_profile,
+        cwd: test_path_buf("/home/user/external").abs(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        history_log_id: 0,
+        history_entry_count: 0,
+        initial_messages: None,
+        network_proxy: None,
+        rollout_path: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "session-configured".into(),
+        msg: EventMsg::SessionConfigured(configured),
+    });
+
+    assert_eq!(
+        &chat.config_ref().legacy_sandbox_policy(),
+        &expected_sandbox
+    );
+    assert_eq!(
+        chat.config_ref()
+            .permissions
+            .file_system_sandbox_policy()
+            .kind,
+        FileSystemSandboxKind::ExternalSandbox,
+    );
+    assert_eq!(
+        chat.config_ref().permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted,
+    );
 }
 
 #[tokio::test]
@@ -301,8 +392,8 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: PathBuf::from("/home/user/project"),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -354,8 +445,8 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: PathBuf::from("/home/user/project"),
+        permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         history_log_id: 0,
         history_entry_count: 0,
@@ -391,18 +482,11 @@ async fn replayed_user_message_with_only_local_images_does_not_render_history_ce
 async fn forked_thread_history_line_includes_name_and_id_snapshot() {
     let (chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let mut chat = chat;
-    let temp = tempdir().expect("tempdir");
-    chat.config.codex_home = temp.path().to_path_buf();
 
     let forked_from_id =
         ThreadId::from_string("e9f18a88-8081-4e51-9d4e-8af5cde2d8dd").expect("forked id");
-    let session_index_entry = format!(
-        "{{\"id\":\"{forked_from_id}\",\"thread_name\":\"named-thread\",\"updated_at\":\"2024-01-02T00:00:00Z\"}}\n"
-    );
-    std::fs::write(temp.path().join("session_index.jsonl"), session_index_entry)
-        .expect("write session index");
 
-    chat.emit_forked_thread_event(forked_from_id);
+    chat.emit_forked_thread_event(forked_from_id, Some("named-thread".to_string()));
 
     let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
@@ -429,11 +513,13 @@ async fn forked_thread_history_line_without_name_shows_id_once_snapshot() {
     let (chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let mut chat = chat;
     let temp = tempdir().expect("tempdir");
-    chat.config.codex_home = temp.path().to_path_buf();
+    chat.config.codex_home =
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(temp.path())
+            .expect("temp dir is absolute");
 
     let forked_from_id =
         ThreadId::from_string("019c2d47-4935-7423-a190-05691f566092").expect("forked id");
-    chat.emit_forked_thread_event(forked_from_id);
+    chat.emit_forked_thread_event(forked_from_id, /*fork_parent_title*/ None);
 
     let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
@@ -449,6 +535,88 @@ async fn forked_thread_history_line_without_name_shows_id_once_snapshot() {
     let combined = lines_to_single_string(&history_cell.display_lines(/*width*/ 80));
 
     assert_chatwidget_snapshot!("forked_thread_history_line_without_name", combined);
+}
+
+#[tokio::test]
+async fn app_server_forked_thread_history_line_uses_app_server_title_snapshot() {
+    let (chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let mut chat = chat;
+    let temp = tempdir().expect("tempdir");
+    chat.config.codex_home =
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(temp.path())
+            .expect("temp dir is absolute");
+
+    let forked_from_id =
+        ThreadId::from_string("e9f18a88-8081-4e51-9d4e-8af5cde2d8dd").expect("forked id");
+    let session_index_entry = format!(
+        "{{\"id\":\"{forked_from_id}\",\"thread_name\":\"stale-local-thread\",\"updated_at\":\"2024-01-02T00:00:00Z\"}}\n"
+    );
+    std::fs::write(temp.path().join("session_index.jsonl"), session_index_entry)
+        .expect("write session index");
+
+    chat.emit_forked_thread_event(forked_from_id, Some("app-server-parent-thread".to_string()));
+
+    let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match rx.recv().await {
+                Some(AppEvent::InsertHistoryCell(cell)) => break cell,
+                Some(_) => continue,
+                None => panic!("app event channel closed before forked thread history was emitted"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for forked thread history");
+    let combined = lines_to_single_string(&history_cell.display_lines(/*width*/ 80));
+
+    assert!(combined.contains("app-server-parent-thread"));
+    assert!(
+        !combined.contains("stale-local-thread"),
+        "app-server fork title lookup should not read local CODEX_HOME"
+    );
+    assert_chatwidget_snapshot!("app_server_forked_thread_history_line", combined);
+}
+
+#[tokio::test]
+async fn app_server_forked_thread_history_line_without_app_server_name_ignores_local_snapshot() {
+    let (chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let mut chat = chat;
+    let temp = tempdir().expect("tempdir");
+    chat.config.codex_home =
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(temp.path())
+            .expect("temp dir is absolute");
+
+    let forked_from_id =
+        ThreadId::from_string("019c2d47-4935-7423-a190-05691f566092").expect("forked id");
+    let session_index_entry = format!(
+        "{{\"id\":\"{forked_from_id}\",\"thread_name\":\"stale-local-thread\",\"updated_at\":\"2024-01-02T00:00:00Z\"}}\n"
+    );
+    std::fs::write(temp.path().join("session_index.jsonl"), session_index_entry)
+        .expect("write session index");
+
+    chat.emit_forked_thread_event(forked_from_id, /*fork_parent_title*/ None);
+
+    let history_cell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match rx.recv().await {
+                Some(AppEvent::InsertHistoryCell(cell)) => break cell,
+                Some(_) => continue,
+                None => panic!("app event channel closed before forked thread history was emitted"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for forked thread history");
+    let combined = lines_to_single_string(&history_cell.display_lines(/*width*/ 80));
+
+    assert!(
+        !combined.contains("stale-local-thread"),
+        "app-server fork title lookup should not read local CODEX_HOME"
+    );
+    assert_chatwidget_snapshot!(
+        "app_server_forked_thread_history_line_without_app_server_name",
+        combined
+    );
 }
 
 #[tokio::test]
@@ -536,6 +704,9 @@ async fn replayed_retryable_app_server_error_keeps_turn_running() {
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
             },
         }),
         Some(ReplayKind::ThreadSnapshot),
@@ -595,8 +766,8 @@ async fn replayed_reasoning_item_hides_raw_reasoning_when_disabled() {
             service_tier: None,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            cwd: test_project_path(),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            cwd: test_project_path().abs(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
@@ -642,8 +813,8 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
             service_tier: None,
             approval_policy: AskForApproval::Never,
             approvals_reviewer: ApprovalsReviewer::User,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            cwd: test_project_path(),
+            permission_profile: codex_protocol::models::PermissionProfile::read_only(),
+            cwd: test_project_path().abs(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
@@ -686,6 +857,9 @@ async fn live_reasoning_summary_is_not_rendered_twice_when_item_completes() {
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
             },
         }),
         /*replay_kind*/ None,
@@ -731,6 +905,7 @@ async fn replayed_turn_started_does_not_mark_task_running() {
 
     chat.replay_initial_messages(vec![EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: "turn-1".to_string(),
+        started_at: None,
         model_context_window: None,
         collaboration_mode_kind: ModeKind::Default,
     })]);
@@ -747,6 +922,7 @@ async fn thread_snapshot_replayed_turn_started_marks_task_running() {
         id: "turn-1".into(),
         msg: EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-1".to_string(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::Default,
         }),
@@ -771,6 +947,9 @@ async fn replayed_in_progress_turn_marks_task_running() {
             items: Vec::new(),
             status: AppServerTurnStatus::InProgress,
             error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
         }],
         ReplayKind::ResumeInitialMessages,
     );
@@ -813,6 +992,7 @@ async fn thread_snapshot_replayed_stream_recovery_restores_previous_status_heade
         id: "task".into(),
         msg: EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-1".to_string(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::Default,
         }),
@@ -853,6 +1033,7 @@ async fn resume_replay_interrupted_reconnect_does_not_leave_stale_working_state(
     chat.replay_initial_messages(vec![
         EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-1".to_string(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::Default,
         }),
@@ -884,6 +1065,7 @@ async fn replayed_interrupted_reconnect_footer_row_snapshot() {
     chat.replay_initial_messages(vec![
         EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-1".to_string(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::Default,
         }),
@@ -909,6 +1091,7 @@ async fn stream_recovery_restores_previous_status_header() {
         id: "task".into(),
         msg: EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: "turn-1".to_string(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::Default,
         }),

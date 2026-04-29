@@ -3,10 +3,12 @@ use codex_features::Feature;
 use codex_features::Features;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::ManagedFileSystemPermissions;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -50,25 +52,40 @@ fn model_info() -> ModelInfo {
 }
 
 #[test]
-fn unified_exec_is_blocked_for_windows_sandboxed_policies_only() {
+fn unified_exec_is_blocked_for_windows_managed_profiles_only() {
     assert!(!unified_exec_allowed_in_environment(
         /*is_windows*/ true,
-        &SandboxPolicy::new_read_only_policy(),
+        &PermissionProfile::read_only(),
         WindowsSandboxLevel::RestrictedToken,
     ));
     assert!(!unified_exec_allowed_in_environment(
         /*is_windows*/ true,
-        &SandboxPolicy::new_workspace_write_policy(),
+        &PermissionProfile::workspace_write(),
         WindowsSandboxLevel::RestrictedToken,
     ));
     assert!(unified_exec_allowed_in_environment(
         /*is_windows*/ true,
-        &SandboxPolicy::DangerFullAccess,
+        &PermissionProfile::Disabled,
         WindowsSandboxLevel::RestrictedToken,
     ));
     assert!(unified_exec_allowed_in_environment(
         /*is_windows*/ true,
-        &SandboxPolicy::DangerFullAccess,
+        &PermissionProfile::External {
+            network: Default::default(),
+        },
+        WindowsSandboxLevel::RestrictedToken,
+    ));
+    assert!(unified_exec_allowed_in_environment(
+        /*is_windows*/ true,
+        &PermissionProfile::Managed {
+            file_system: ManagedFileSystemPermissions::Unrestricted,
+            network: NetworkSandboxPolicy::Enabled,
+        },
+        WindowsSandboxLevel::RestrictedToken,
+    ));
+    assert!(unified_exec_allowed_in_environment(
+        /*is_windows*/ true,
+        &PermissionProfile::Disabled,
         WindowsSandboxLevel::Disabled,
     ));
 }
@@ -85,9 +102,10 @@ fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Live),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
@@ -131,9 +149,10 @@ fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
 }
 
 #[test]
-fn subagents_disable_request_user_input_and_agent_jobs_workers_opt_in_by_label() {
+fn subagents_keep_request_user_input_mode_config_and_agent_jobs_workers_opt_in_by_label() {
     let model_info = model_info();
     let mut features = Features::with_defaults();
+    features.enable(Feature::DefaultModeRequestUserInput);
     features.enable(Feature::SpawnCsv);
 
     let available_models = Vec::new();
@@ -141,16 +160,16 @@ fn subagents_disable_request_user_input_and_agent_jobs_workers_opt_in_by_label()
         model_info: &model_info,
         available_models: &available_models,
         features: &features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
             "agent_job:test".to_string(),
         )),
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    assert!(!tools_config.request_user_input);
-    assert!(!tools_config.default_mode_request_user_input);
+    assert!(tools_config.default_mode_request_user_input);
     assert!(tools_config.agent_jobs_tools);
     assert!(tools_config.agent_jobs_worker_tools);
 }
@@ -161,40 +180,86 @@ fn image_generation_requires_feature_and_supported_model() {
     let mut unsupported_model_info = supported_model_info.clone();
     unsupported_model_info.input_modalities = vec![InputModality::Text];
 
-    let default_features = Features::with_defaults();
-    let mut image_generation_features = default_features.clone();
+    let mut image_generation_disabled_features = Features::with_defaults();
+    image_generation_disabled_features.disable(Feature::ImageGeneration);
+    let mut image_generation_features = Features::with_defaults();
     image_generation_features.enable(Feature::ImageGeneration);
 
     let available_models = Vec::new();
     let default_tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &supported_model_info,
         available_models: &available_models,
-        features: &default_features,
+        features: &image_generation_disabled_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let supported_tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &supported_model_info,
         available_models: &available_models,
         features: &image_generation_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let auth_disallowed_tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &supported_model_info,
+        available_models: &available_models,
+        features: &image_generation_features,
+        image_generation_tool_auth_allowed: false,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
     let unsupported_tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &unsupported_model_info,
         available_models: &available_models,
         features: &image_generation_features,
+        image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
-
     assert!(!default_tools_config.image_gen_tool);
     assert!(supported_tools_config.image_gen_tool);
+    assert!(!auth_disallowed_tools_config.image_gen_tool);
     assert!(!unsupported_tools_config.image_gen_tool);
+}
+
+#[test]
+fn provider_capability_methods_disable_provider_bound_tool_surfaces() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    tools_config.search_tool = true;
+    tools_config.tool_suggest = true;
+    tools_config.image_gen_tool = true;
+    tools_config.namespace_tools = true;
+
+    let tools_config = tools_config
+        .with_namespace_tools_capability(/*namespace_tools*/ false)
+        .with_image_generation_capability(/*image_generation*/ false)
+        .with_web_search_capability(/*web_search*/ false);
+
+    assert!(tools_config.search_tool);
+    assert!(tools_config.tool_suggest);
+    assert!(!tools_config.image_gen_tool);
+    assert!(!tools_config.namespace_tools);
+    assert_eq!(tools_config.web_search_mode, None);
 }

@@ -28,9 +28,7 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
-use codex_login::AuthCredentialsStoreMode;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
+use codex_config::types::AuthCredentialsStoreMode;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -38,6 +36,11 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
+// macOS and Windows Bazel CI can spend tens of seconds starting app-server
+// subprocesses or processing test RPCs under load.
+#[cfg(any(target_os = "macos", windows))]
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+#[cfg(not(any(target_os = "macos", windows)))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const AUTO_COMPACT_LIMIT: i64 = 1_000;
 const COMPACT_PROMPT: &str = "Summarize the conversation.";
@@ -57,14 +60,10 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
         responses::ev_completed_with_tokens("r2", /*total_tokens*/ 330_000),
     ]);
     let sse3 = responses::sse(vec![
-        responses::ev_assistant_message("m3", "LOCAL_SUMMARY"),
-        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 200),
-    ]);
-    let sse4 = responses::sse(vec![
         responses::ev_assistant_message("m4", "FINAL_REPLY"),
         responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
     ]);
-    responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
+    responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
 
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
@@ -122,26 +121,6 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     ]);
     let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
 
-    let compacted_history = vec![
-        ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "REMOTE_COMPACT_SUMMARY".to_string(),
-            }],
-            end_turn: None,
-            phase: None,
-        },
-        ResponseItem::Compaction {
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-        },
-    ];
-    let compact_mock = responses::mount_compact_json_once(
-        &server,
-        serde_json::json!({ "output": compacted_history }),
-    )
-    .await;
-
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
         codex_home.path(),
@@ -180,10 +159,6 @@ async fn auto_compaction_remote_emits_started_and_completed_items() -> Result<()
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
 
-    let compact_requests = compact_mock.requests();
-    assert_eq!(compact_requests.len(), 1);
-    assert_eq!(compact_requests[0].path(), "/v1/responses/compact");
-
     let response_requests = responses_log.requests();
     assert_eq!(response_requests.len(), 3);
 
@@ -195,12 +170,6 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
-    let sse = responses::sse(vec![
-        responses::ev_assistant_message("m1", "MANUAL_COMPACT_SUMMARY"),
-        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200),
-    ]);
-    responses::mount_sse_sequence(&server, vec![sse]).await;
-
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
         codex_home.path(),

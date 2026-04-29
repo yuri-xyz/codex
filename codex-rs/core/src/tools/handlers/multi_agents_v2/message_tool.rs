@@ -4,6 +4,7 @@
 //! resulting `InterAgentCommunication` should wake the target immediately.
 
 use super::*;
+use crate::tools::context::FunctionToolOutput;
 use codex_protocol::protocol::InterAgentCommunication;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -42,32 +43,6 @@ pub(crate) struct SendMessageArgs {
 pub(crate) struct FollowupTaskArgs {
     pub(crate) target: String,
     pub(crate) message: String,
-    #[serde(default)]
-    pub(crate) interrupt: bool,
-}
-
-#[derive(Debug, Serialize)]
-/// Tool result shared by the MultiAgentV2 message-delivery tools.
-pub(crate) struct MessageToolResult {
-    submission_id: String,
-}
-
-impl ToolOutput for MessageToolResult {
-    fn log_preview(&self) -> String {
-        tool_output_json_text(self, "multi_agent_message")
-    }
-
-    fn success_for_logging(&self) -> bool {
-        true
-    }
-
-    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
-        tool_output_response_item(call_id, payload, self, Some(true), "multi_agent_message")
-    }
-
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        tool_output_code_mode_result(self, "multi_agent_message")
-    }
 }
 
 fn message_content(message: String) -> Result<String, FunctionCallError> {
@@ -85,16 +60,8 @@ pub(crate) async fn handle_message_string_tool(
     mode: MessageDeliveryMode,
     target: String,
     message: String,
-    interrupt: bool,
-) -> Result<MessageToolResult, FunctionCallError> {
-    handle_message_submission(
-        invocation,
-        mode,
-        target,
-        message_content(message)?,
-        interrupt,
-    )
-    .await
+) -> Result<FunctionToolOutput, FunctionCallError> {
+    handle_message_submission(invocation, mode, target, message_content(message)?).await
 }
 
 async fn handle_message_submission(
@@ -102,16 +69,13 @@ async fn handle_message_submission(
     mode: MessageDeliveryMode,
     target: String,
     prompt: String,
-    interrupt: bool,
-) -> Result<MessageToolResult, FunctionCallError> {
+) -> Result<FunctionToolOutput, FunctionCallError> {
     let ToolInvocation {
         session,
         turn,
-        payload,
         call_id,
         ..
     } = invocation;
-    let _ = payload;
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
     let receiver_agent = session
         .services
@@ -127,14 +91,6 @@ async fn handle_message_submission(
         return Err(FunctionCallError::RespondToModel(
             "Tasks can't be assigned to the root agent".to_string(),
         ));
-    }
-    if interrupt {
-        session
-            .services
-            .agent_control
-            .interrupt_agent(receiver_thread_id)
-            .await
-            .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
     }
     session
         .send_event(
@@ -186,7 +142,7 @@ async fn handle_message_submission(
             .into(),
         )
         .await;
-    let submission_id = result?;
+    result?;
 
-    Ok(MessageToolResult { submission_id })
+    Ok(FunctionToolOutput::from_text(String::new(), Some(true)))
 }

@@ -1,19 +1,29 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(test)]
-use crate::codex::PreviousTurnSettings;
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::error::Result as CodexResult;
+use crate::session::PreviousTurnSettings;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::web_search::web_search_action_detail;
+use codex_analytics::CodexCompactionEvent;
+use codex_analytics::CompactionImplementation;
+use codex_analytics::CompactionPhase;
+use codex_analytics::CompactionReason;
+use codex_analytics::CompactionStatus;
+use codex_analytics::CompactionStrategy;
+use codex_analytics::CompactionTrigger;
+use codex_analytics::now_unix_seconds;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::LocalShellExecAction;
 use codex_protocol::models::LocalShellStatus;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::CompactedItem;
@@ -24,6 +34,8 @@ use codex_protocol::user_input::UserInput;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
+
+use codex_model_provider_info::ModelProviderInfo;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
@@ -47,7 +59,7 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
-pub(crate) fn should_use_remote_compact_task(_provider: &crate::ModelProviderInfo) -> bool {
+pub(crate) fn should_use_remote_compact_task(_provider: &ModelProviderInfo) -> bool {
     false
 }
 
@@ -55,8 +67,18 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
 ) -> CodexResult<()> {
-    run_compact_task_inner(sess, turn_context, initial_context_injection).await?;
+    run_compact_task_inner(
+        sess,
+        turn_context,
+        initial_context_injection,
+        CompactionTrigger::Auto,
+        reason,
+        phase,
+    )
+    .await?;
     Ok(())
 }
 
@@ -67,14 +89,56 @@ pub(crate) async fn run_compact_task(
 ) -> CodexResult<()> {
     let start_event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
+        started_at: turn_context.turn_timing_state.started_at_unix_secs().await,
         model_context_window: turn_context.model_context_window(),
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    run_compact_task_inner(sess.clone(), turn_context, InitialContextInjection::DoNotInject).await
+    run_compact_task_inner(
+        sess.clone(),
+        turn_context,
+        InitialContextInjection::DoNotInject,
+        CompactionTrigger::Manual,
+        CompactionReason::UserRequested,
+        CompactionPhase::StandaloneTurn,
+    )
+    .await
 }
 
 async fn run_compact_task_inner(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    initial_context_injection: InitialContextInjection,
+    trigger: CompactionTrigger,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+) -> CodexResult<()> {
+    let attempt = CompactionAnalyticsAttempt::begin(
+        sess.as_ref(),
+        turn_context.as_ref(),
+        trigger,
+        reason,
+        CompactionImplementation::Responses,
+        phase,
+    )
+    .await;
+    let result = run_compact_task_inner_impl(
+        Arc::clone(&sess),
+        Arc::clone(&turn_context),
+        initial_context_injection,
+    )
+    .await;
+    attempt
+        .track(
+            sess.as_ref(),
+            compaction_status_from_result(&result),
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+    result
+}
+
+async fn run_compact_task_inner_impl(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
@@ -85,6 +149,7 @@ async fn run_compact_task_inner(
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
     let summary_text = build_deterministic_summary_text(history_items);
+
     let mut new_history = build_compacted_history(Vec::new(), &[], &summary_text);
 
     if matches!(
@@ -95,12 +160,6 @@ async fn run_compact_task_inner(
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
     }
-    let ghost_snapshots: Vec<ResponseItem> = history_items
-        .iter()
-        .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
-        .cloned()
-        .collect();
-    new_history.extend(ghost_snapshots);
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
@@ -122,6 +181,79 @@ async fn run_compact_task_inner(
     Ok(())
 }
 
+pub(crate) struct CompactionAnalyticsAttempt {
+    thread_id: String,
+    turn_id: String,
+    trigger: CompactionTrigger,
+    reason: CompactionReason,
+    implementation: CompactionImplementation,
+    phase: CompactionPhase,
+    active_context_tokens_before: i64,
+    started_at: u64,
+    start_instant: Instant,
+}
+
+impl CompactionAnalyticsAttempt {
+    pub(crate) async fn begin(
+        sess: &Session,
+        turn_context: &TurnContext,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        implementation: CompactionImplementation,
+        phase: CompactionPhase,
+    ) -> Self {
+        let active_context_tokens_before = sess.get_total_token_usage().await;
+        Self {
+            thread_id: sess.conversation_id.to_string(),
+            turn_id: turn_context.sub_id.clone(),
+            trigger,
+            reason,
+            implementation,
+            phase,
+            active_context_tokens_before,
+            started_at: now_unix_seconds(),
+            start_instant: Instant::now(),
+        }
+    }
+
+    pub(crate) async fn track(
+        self,
+        sess: &Session,
+        status: CompactionStatus,
+        error: Option<String>,
+    ) {
+        let active_context_tokens_after = sess.get_total_token_usage().await;
+        sess.services
+            .analytics_events_client
+            .track_compaction(CodexCompactionEvent {
+                thread_id: self.thread_id,
+                turn_id: self.turn_id,
+                trigger: self.trigger,
+                reason: self.reason,
+                implementation: self.implementation,
+                phase: self.phase,
+                strategy: CompactionStrategy::Memento,
+                status,
+                error,
+                active_context_tokens_before: self.active_context_tokens_before,
+                active_context_tokens_after,
+                started_at: self.started_at,
+                completed_at: now_unix_seconds(),
+                duration_ms: Some(
+                    u64::try_from(self.start_instant.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ),
+            });
+    }
+}
+
+pub(crate) fn compaction_status_from_result<T>(result: &CodexResult<T>) -> CompactionStatus {
+    match result {
+        Ok(_) => CompactionStatus::Completed,
+        Err(CodexErr::Interrupted | CodexErr::TurnAborted) => CompactionStatus::Interrupted,
+        Err(_) => CompactionStatus::Failed,
+    }
+}
+
 fn build_deterministic_summary_text(items: &[ResponseItem]) -> String {
     let rendered_events = render_compaction_events(items);
     let start = rendered_events
@@ -136,7 +268,8 @@ fn build_deterministic_summary_text(items: &[ResponseItem]) -> String {
 fn render_compaction_events(items: &[ResponseItem]) -> Vec<String> {
     let mut tool_names_by_call_id = HashMap::new();
 
-    items.iter()
+    items
+        .iter()
         .filter_map(|item| render_compaction_event(item, &mut tool_names_by_call_id))
         .collect()
 }
@@ -217,7 +350,9 @@ fn render_compaction_event(
                 pretty_json_value(&serde_json::Value::Array(tools.clone()))
                     .unwrap_or_else(|| serde_json::Value::Array(tools.clone()).to_string())
             };
-            Some(format!("Tool output: {label} ({execution}, {status})\n{body}"))
+            Some(format!(
+                "Tool output: {label} ({execution}, {status})\n{body}"
+            ))
         }
         ResponseItem::WebSearchCall { status, action, .. } => {
             render_web_search_event(status.as_deref(), action.as_ref())
@@ -229,7 +364,9 @@ fn render_compaction_event(
             ..
         } => {
             let mut sections = vec![format!("Image generation ({status})")];
-            if let Some(prompt) = revised_prompt.as_ref().filter(|prompt| !prompt.trim().is_empty())
+            if let Some(prompt) = revised_prompt
+                .as_ref()
+                .filter(|prompt| !prompt.trim().is_empty())
             {
                 sections.push(format!("Prompt\n{prompt}"));
             }
@@ -238,13 +375,15 @@ fn render_compaction_event(
             }
             Some(sections.join("\n"))
         }
-        ResponseItem::GhostSnapshot { .. }
-        | ResponseItem::Compaction { .. }
-        | ResponseItem::Other
-        | ResponseItem::Message { .. } => None,
+        ResponseItem::Compaction { .. } | ResponseItem::Other | ResponseItem::Message { .. } => {
+            None
+        }
     }?;
 
-    Some(truncate_rendered_event_lines(&rendered, DETERMINISTIC_COMPACT_LINE_LIMIT))
+    Some(truncate_rendered_event_lines(
+        &rendered,
+        DETERMINISTIC_COMPACT_LINE_LIMIT,
+    ))
 }
 
 fn render_reasoning_event(
@@ -281,7 +420,10 @@ fn render_reasoning_event(
     (!sections.is_empty()).then(|| sections.join("\n"))
 }
 
-fn render_local_shell_event(status: &LocalShellStatus, action: &LocalShellAction) -> Option<String> {
+fn render_local_shell_event(
+    status: &LocalShellStatus,
+    action: &LocalShellAction,
+) -> Option<String> {
     match action {
         LocalShellAction::Exec(LocalShellExecAction {
             command,
@@ -334,7 +476,10 @@ fn render_tool_output_event(
     })
 }
 
-fn render_web_search_event(status: Option<&str>, action: Option<&WebSearchAction>) -> Option<String> {
+fn render_web_search_event(
+    status: Option<&str>,
+    action: Option<&WebSearchAction>,
+) -> Option<String> {
     let action_label = action.map_or_else(
         || "web search".to_string(),
         |action| match action {
@@ -372,16 +517,14 @@ fn truncate_rendered_event_lines(text: &str, max_lines: usize) -> String {
         return format!("… event truncated after {max_lines} lines");
     }
 
-    let mut line_count = 0usize;
     let mut kept: Vec<String> = Vec::new();
     let mut truncated = false;
-    for line in text.lines() {
+    for (line_count, line) in text.lines().enumerate() {
         if line_count == max_lines {
             truncated = true;
             break;
         }
         kept.push(line.to_string());
-        line_count += 1;
     }
 
     if !truncated {
@@ -528,7 +671,6 @@ fn build_compacted_history_with_limit(
             content: vec![ContentItem::InputText {
                 text: message.clone(),
             }],
-            end_turn: None,
             phase: None,
         });
     }
@@ -543,7 +685,6 @@ fn build_compacted_history_with_limit(
         id: None,
         role: "user".to_string(),
         content: vec![ContentItem::InputText { text: summary_text }],
-        end_turn: None,
         phase: None,
     });
 

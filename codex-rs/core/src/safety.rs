@@ -7,11 +7,17 @@ use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::SandboxType;
 use codex_sandboxing::get_platform_sandbox;
+use codex_utils_absolute_path::AbsolutePathBuf;
+
+const PATCH_REJECTED_OUTSIDE_PROJECT_REASON: &str =
+    "writing outside of the project; rejected by user approval settings";
+const PATCH_REJECTED_READ_ONLY_REASON: &str =
+    "writing is blocked by read-only sandbox; rejected by user approval settings";
 
 #[derive(Debug, PartialEq)]
 pub enum SafetyCheck {
@@ -29,9 +35,9 @@ pub fn assess_patch_safety(
     action: &ApplyPatchAction,
     collaboration_mode: ModeKind,
     policy: AskForApproval,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
-    cwd: &Path,
+    cwd: &AbsolutePathBuf,
     windows_sandbox_level: WindowsSandboxLevel,
 ) -> SafetyCheck {
     if action.is_empty() {
@@ -71,10 +77,11 @@ pub fn assess_patch_safety(
         || matches!(policy, AskForApproval::OnFailure)
     {
         if matches!(
-            sandbox_policy,
-            SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+            permission_profile,
+            PermissionProfile::Disabled | PermissionProfile::External { .. }
         ) {
-            // DangerFullAccess is intended to bypass sandboxing entirely.
+            // Disabled and External profiles intentionally do not apply an
+            // outer Codex filesystem sandbox.
             SafetyCheck::AutoApprove {
                 sandbox_type: SandboxType::None,
                 user_explicitly_approved: false,
@@ -91,9 +98,12 @@ pub fn assess_patch_safety(
                 None => {
                     if rejects_sandbox_approval {
                         SafetyCheck::Reject {
-                            reason:
-                                "writing outside of the project; rejected by user approval settings"
-                                    .to_string(),
+                            reason: patch_rejection_reason(
+                                permission_profile,
+                                file_system_sandbox_policy,
+                                cwd,
+                            )
+                            .to_string(),
                         }
                     } else {
                         SafetyCheck::AskUser
@@ -103,7 +113,7 @@ pub fn assess_patch_safety(
         }
     } else if rejects_sandbox_approval {
         SafetyCheck::Reject {
-            reason: "writing outside of the project; rejected by user approval settings"
+            reason: patch_rejection_reason(permission_profile, file_system_sandbox_policy, cwd)
                 .to_string(),
         }
     } else {
@@ -111,10 +121,30 @@ pub fn assess_patch_safety(
     }
 }
 
+fn patch_rejection_reason(
+    permission_profile: &PermissionProfile,
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+    cwd: &AbsolutePathBuf,
+) -> &'static str {
+    match permission_profile {
+        PermissionProfile::Managed { .. }
+            if !file_system_sandbox_policy.has_full_disk_write_access()
+                && file_system_sandbox_policy
+                    .get_writable_roots_with_cwd(cwd.as_path())
+                    .is_empty() =>
+        {
+            PATCH_REJECTED_READ_ONLY_REASON
+        }
+        PermissionProfile::Managed { .. }
+        | PermissionProfile::Disabled
+        | PermissionProfile::External { .. } => PATCH_REJECTED_OUTSIDE_PROJECT_REASON,
+    }
+}
+
 fn is_write_patch_constrained_to_writable_paths(
     action: &ApplyPatchAction,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
-    cwd: &Path,
+    cwd: &AbsolutePathBuf,
 ) -> bool {
     // Normalize a path by removing `.` and resolving `..` without touching the
     // filesystem (works even if the file does not exist).

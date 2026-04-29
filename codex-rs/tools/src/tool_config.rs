@@ -4,13 +4,13 @@ use codex_features::Features;
 use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::WebSearchToolType;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -86,6 +86,7 @@ pub struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub shell_command_backend: ShellCommandBackendConfig,
     pub unified_exec_shell_mode: UnifiedExecShellMode,
+    pub has_environment: bool,
     pub allow_login_shell: bool,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_mode: Option<WebSearchMode>,
@@ -93,17 +94,21 @@ pub struct ToolsConfig {
     pub web_search_tool_type: WebSearchToolType,
     pub image_gen_tool: bool,
     pub search_tool: bool,
+    pub namespace_tools: bool,
     pub tool_suggest: bool,
     pub exec_permission_approvals_enabled: bool,
     pub request_permissions_tool_enabled: bool,
     pub code_mode_enabled: bool,
     pub code_mode_only_enabled: bool,
-    pub js_repl_enabled: bool,
-    pub js_repl_tools_only: bool,
     pub can_request_original_image_detail: bool,
     pub collab_tools: bool,
+    pub goal_tools: bool,
     pub multi_agent_v2: bool,
-    pub request_user_input: bool,
+    pub hide_spawn_agent_metadata: bool,
+    pub spawn_agent_usage_hint: bool,
+    pub spawn_agent_usage_hint_text: Option<String>,
+    pub max_concurrent_threads_per_session: Option<usize>,
+    pub wait_agent_min_timeout_ms: Option<i64>,
     pub default_mode_request_user_input: bool,
     pub experimental_supported_tools: Vec<String>,
     pub agent_jobs_tools: bool,
@@ -115,9 +120,10 @@ pub struct ToolsConfigParams<'a> {
     pub model_info: &'a ModelInfo,
     pub available_models: &'a [ModelPreset],
     pub features: &'a Features,
+    pub image_generation_tool_auth_allowed: bool,
     pub web_search_mode: Option<WebSearchMode>,
     pub session_source: SessionSource,
-    pub sandbox_policy: &'a SandboxPolicy,
+    pub permission_profile: &'a PermissionProfile,
     pub windows_sandbox_level: WindowsSandboxLevel,
 }
 
@@ -127,31 +133,32 @@ impl ToolsConfig {
             model_info,
             available_models,
             features,
+            image_generation_tool_auth_allowed,
             web_search_mode,
             session_source,
-            sandbox_policy,
+            permission_profile,
             windows_sandbox_level,
         } = params;
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_code_mode = features.enabled(Feature::CodeMode);
         let include_code_mode_only = include_code_mode && features.enabled(Feature::CodeModeOnly);
-        let include_js_repl = features.enabled(Feature::JsRepl);
-        let include_js_repl_tools_only =
-            include_js_repl && features.enabled(Feature::JsReplToolsOnly);
         let include_collab_tools = features.enabled(Feature::Collab);
+        let include_goal_tools = features.enabled(Feature::Goals);
         let include_multi_agent_v2 = features.enabled(Feature::MultiAgentV2);
         let include_agent_jobs = features.enabled(Feature::SpawnCsv);
-        let include_request_user_input = !matches!(session_source, SessionSource::SubAgent(_));
         let include_default_mode_request_user_input =
-            include_request_user_input && features.enabled(Feature::DefaultModeRequestUserInput);
+            features.enabled(Feature::DefaultModeRequestUserInput);
         let include_search_tool =
             model_info.supports_search_tool && features.enabled(Feature::ToolSearch);
         let include_tool_suggest = features.enabled(Feature::ToolSuggest)
             && features.enabled(Feature::Apps)
             && features.enabled(Feature::Plugins);
-        let include_original_image_detail = can_request_original_image_detail(features, model_info);
-        let include_image_gen_tool =
-            features.enabled(Feature::ImageGeneration) && supports_image_generation(model_info);
+        let include_original_image_detail = can_request_original_image_detail(model_info);
+        // API-key auth bypasses Codex backend entitlement/tool normalization, so
+        // callers must confirm ChatGPT auth before exposing the built-in tool.
+        let include_image_gen_tool = *image_generation_tool_auth_allowed
+            && features.enabled(Feature::ImageGeneration)
+            && supports_image_generation(model_info);
         let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals);
         let request_permissions_tool_enabled = features.enabled(Feature::RequestPermissionsTool);
         let shell_command_backend =
@@ -162,7 +169,7 @@ impl ToolsConfig {
             };
         let unified_exec_allowed = unified_exec_allowed_in_environment(
             cfg!(target_os = "windows"),
-            sandbox_policy,
+            permission_profile,
             *windows_sandbox_level,
         );
         let shell_type = if !features.enabled(Feature::ShellTool) {
@@ -200,6 +207,7 @@ impl ToolsConfig {
             shell_type,
             shell_command_backend,
             unified_exec_shell_mode: UnifiedExecShellMode::Direct,
+            has_environment: true,
             allow_login_shell: true,
             apply_patch_tool_type,
             web_search_mode: *web_search_mode,
@@ -207,17 +215,21 @@ impl ToolsConfig {
             web_search_tool_type: model_info.web_search_tool_type,
             image_gen_tool: include_image_gen_tool,
             search_tool: include_search_tool,
+            namespace_tools: true,
             tool_suggest: include_tool_suggest,
             exec_permission_approvals_enabled,
             request_permissions_tool_enabled,
             code_mode_enabled: include_code_mode,
             code_mode_only_enabled: include_code_mode_only,
-            js_repl_enabled: include_js_repl,
-            js_repl_tools_only: include_js_repl_tools_only,
             can_request_original_image_detail: include_original_image_detail,
             collab_tools: include_collab_tools,
+            goal_tools: include_goal_tools,
             multi_agent_v2: include_multi_agent_v2,
-            request_user_input: include_request_user_input,
+            hide_spawn_agent_metadata: false,
+            spawn_agent_usage_hint: true,
+            spawn_agent_usage_hint_text: None,
+            max_concurrent_threads_per_session: None,
+            wait_agent_min_timeout_ms: None,
             default_mode_request_user_input: include_default_mode_request_user_input,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_jobs_tools: include_agent_jobs,
@@ -231,8 +243,73 @@ impl ToolsConfig {
         self
     }
 
+    pub fn with_namespace_tools_capability(mut self, namespace_tools: bool) -> Self {
+        if !namespace_tools {
+            self.namespace_tools = false;
+        }
+        self
+    }
+
+    pub fn with_image_generation_capability(mut self, image_generation: bool) -> Self {
+        if !image_generation {
+            self.image_gen_tool = false;
+        }
+        self
+    }
+
+    pub fn with_web_search_capability(mut self, web_search: bool) -> Self {
+        if !web_search {
+            self.web_search_mode = None;
+        }
+        self
+    }
+
+    pub fn with_spawn_agent_usage_hint(mut self, spawn_agent_usage_hint: bool) -> Self {
+        self.spawn_agent_usage_hint = spawn_agent_usage_hint;
+        self
+    }
+
+    pub fn with_spawn_agent_usage_hint_text(
+        mut self,
+        spawn_agent_usage_hint_text: Option<String>,
+    ) -> Self {
+        self.spawn_agent_usage_hint_text = spawn_agent_usage_hint_text;
+        self
+    }
+
+    pub fn with_hide_spawn_agent_metadata(mut self, hide_spawn_agent_metadata: bool) -> Self {
+        self.hide_spawn_agent_metadata = hide_spawn_agent_metadata;
+        self
+    }
+
+    pub fn with_goal_tools_allowed(mut self, allowed: bool) -> Self {
+        self.goal_tools = self.goal_tools && allowed;
+        self
+    }
+
+    pub fn with_max_concurrent_threads_per_session(
+        mut self,
+        max_concurrent_threads_per_session: Option<usize>,
+    ) -> Self {
+        self.max_concurrent_threads_per_session = max_concurrent_threads_per_session;
+        self
+    }
+
+    pub fn with_wait_agent_min_timeout_ms(
+        mut self,
+        wait_agent_min_timeout_ms: Option<i64>,
+    ) -> Self {
+        self.wait_agent_min_timeout_ms = wait_agent_min_timeout_ms;
+        self
+    }
+
     pub fn with_allow_login_shell(mut self, allow_login_shell: bool) -> Self {
         self.allow_login_shell = allow_login_shell;
+        self
+    }
+
+    pub fn with_has_environment(mut self, has_environment: bool) -> Self {
+        self.has_environment = has_environment;
         self
     }
 
@@ -278,15 +355,19 @@ fn supports_image_generation(model_info: &ModelInfo) -> bool {
 
 fn unified_exec_allowed_in_environment(
     is_windows: bool,
-    sandbox_policy: &SandboxPolicy,
+    permission_profile: &PermissionProfile,
     windows_sandbox_level: WindowsSandboxLevel,
 ) -> bool {
+    let managed_sandbox_required = match permission_profile {
+        PermissionProfile::Managed {
+            file_system,
+            network,
+        } => !file_system.to_sandbox_policy().has_full_disk_write_access() || !network.is_enabled(),
+        PermissionProfile::Disabled | PermissionProfile::External { .. } => false,
+    };
     !(is_windows
         && windows_sandbox_level != WindowsSandboxLevel::Disabled
-        && !matches!(
-            sandbox_policy,
-            SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
-        ))
+        && managed_sandbox_required)
 }
 
 #[cfg(test)]

@@ -43,3 +43,4 @@ git log --author="yuri-xyz" --oneline
 - Added an `Unrestricted` collaboration mode to the Shift+Tab mode cycle that temporarily applies Full Access behavior without approval prompts, then restores the prior permission settings when you leave the mode.
 - Made `Shift+Tab` inside approval confirmations auto-approve the current request and immediately switch the session into `Unrestricted` mode so the rest of the request, and later requests, keep running without prompts until you cycle modes again.
 - Added a `Meta+S` composer stash flow: with a non-empty draft it stashes the current prompt into a new stash group above the input, and with a blank composer it pops the most recently stashed draft back into the composer.
+- Added a direnv-backed Nix development environment so repo tools such as `just`, Rust, OpenSSL, and libclang are loaded automatically when entering the checkout.

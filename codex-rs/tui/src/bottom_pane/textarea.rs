@@ -10,7 +10,10 @@
 //! This module does not implement an Emacs-style multi-entry kill ring. It keeps only the most
 //! recent killed span.
 
+use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::is_altgr;
+use crate::keymap::EditorKeymap;
+use crate::keymap::RuntimeKeymap;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement as UserTextElement;
 use crossterm::event::KeyCode;
@@ -19,7 +22,6 @@ use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
@@ -34,6 +36,32 @@ const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
 
 fn is_word_separator(ch: char) -> bool {
     WORD_SEPARATORS.contains(ch)
+}
+
+fn split_word_pieces(run: &str) -> Vec<(usize, &str)> {
+    let mut pieces = Vec::new();
+    for (segment_start, segment) in run.split_word_bound_indices() {
+        let mut piece_start = 0;
+        let mut chars = segment.char_indices();
+        let Some((_, first_char)) = chars.next() else {
+            continue;
+        };
+        let mut in_separator = is_word_separator(first_char);
+
+        for (idx, ch) in chars {
+            let is_separator = is_word_separator(ch);
+            if is_separator == in_separator {
+                continue;
+            }
+            pieces.push((segment_start + piece_start, &segment[piece_start..idx]));
+            piece_start = idx;
+            in_separator = is_separator;
+        }
+
+        pieces.push((segment_start + piece_start, &segment[piece_start..]));
+    }
+
+    pieces
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +95,7 @@ pub(crate) struct TextArea {
     elements: Vec<TextElement>,
     next_element_id: u64,
     kill_buffer: String,
+    editor_keymap: EditorKeymap,
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +120,18 @@ impl TextArea {
             elements: Vec::new(),
             next_element_id: 1,
             kill_buffer: String::new(),
+            editor_keymap: RuntimeKeymap::defaults().editor,
         }
+    }
+
+    /// Replace the editor keymap used by subsequent text-editing input.
+    ///
+    /// This method intentionally swaps only the keymap cache. It does not
+    /// reinterpret pending input, move the cursor, or mutate the kill buffer, so
+    /// callers can safely apply a live config update while preserving the
+    /// current draft exactly as typed.
+    pub fn set_keymap_bindings(&mut self, keymap: &EditorKeymap) {
+        self.editor_keymap = keymap.clone();
     }
 
     /// Replace the visible textarea text and clear any existing text elements.
@@ -294,243 +334,123 @@ impl TextArea {
         if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return;
         }
-        match event {
-            // Some terminals (or configurations) send Control key chords as
-            // C0 control characters without reporting the CONTROL modifier.
-            // Handle common fallbacks for Ctrl-B/F/P/N here so they don't get
-            // inserted as literal control bytes.
-            KeyEvent { code: KeyCode::Char('\u{0002}'), modifiers: KeyModifiers::NONE, .. } /* ^B */ => {
-                self.move_cursor_left();
-            }
-            KeyEvent { code: KeyCode::Char('\u{0006}'), modifiers: KeyModifiers::NONE, .. } /* ^F */ => {
-                self.move_cursor_right();
-            }
-            KeyEvent { code: KeyCode::Char('\u{0010}'), modifiers: KeyModifiers::NONE, .. } /* ^P */ => {
-                self.move_cursor_up();
-            }
-            KeyEvent { code: KeyCode::Char('\u{000e}'), modifiers: KeyModifiers::NONE, .. } /* ^N */ => {
-                self.move_cursor_down();
-            }
-            KeyEvent {
-                code: KeyCode::Char(c),
-                // Insert plain characters (and Shift-modified). Do NOT insert when ALT is held,
-                // because many terminals map Option/Meta combos to ALT+<char> (e.g. ESC f/ESC b)
-                // for word navigation. Those are handled explicitly below.
-                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
-                ..
-            } => self.insert_str(&c.to_string()),
-            KeyEvent {
-                code: KeyCode::Char('j' | 'm'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Enter,
-                ..
-            } => self.insert_str("\n"),
-            KeyEvent {
-                code: KeyCode::Char('h'),
-                modifiers,
-                ..
-            } if modifiers == (KeyModifiers::CONTROL | KeyModifiers::ALT) => {
-                self.delete_backward_word()
-            },
-            // Windows AltGr generates ALT|CONTROL; treat as a plain character input unless
-            // we match a specific Control+Alt binding above.
-            KeyEvent {
-                code: KeyCode::Char(c),
-                modifiers,
-                ..
-            } if is_altgr(modifiers) => self.insert_str(&c.to_string()),
-            KeyEvent {
-                code: KeyCode::Backspace,
-                modifiers: KeyModifiers::ALT,
-                ..
-            } => self.delete_backward_word(),
-            KeyEvent {
-                code: KeyCode::Backspace,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('h'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => self.delete_backward(/*n*/ 1),
-            KeyEvent {
-                code: KeyCode::Delete,
-                modifiers: KeyModifiers::ALT,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('d'),
-                modifiers: KeyModifiers::ALT,
-                ..
-            } => self.delete_forward_word(),
-            KeyEvent {
-                code: KeyCode::Delete,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('d'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => self.delete_forward(/*n*/ 1),
+        let keymap = self.editor_keymap.clone();
+        self.input_with_keymap(event, &keymap);
+    }
 
-            KeyEvent {
-                code: KeyCode::Char('w'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.delete_backward_word();
-            }
-            // Meta-b -> move to beginning of previous word
-            // Meta-f -> move to end of next word
-            // Many terminals map Option (macOS) to Alt. Some send Alt|Shift, so match contains(ALT).
-            KeyEvent {
-                code: KeyCode::Char('b'),
-                modifiers: KeyModifiers::ALT,
-                ..
-            } => {
-                self.set_cursor(self.beginning_of_previous_word());
-            }
-            KeyEvent {
-                code: KeyCode::Char('f'),
-                modifiers: KeyModifiers::ALT,
-                ..
-            } => {
-                self.set_cursor(self.end_of_next_word());
-            }
-            KeyEvent {
-                code: KeyCode::Char('u'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.kill_to_beginning_of_line();
-            }
-            KeyEvent {
-                code: KeyCode::Char('k'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.kill_to_end_of_line();
-            }
-            KeyEvent {
-                code: KeyCode::Char('y'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.yank();
-            }
-
-            // Cursor movement
-            KeyEvent {
-                code: KeyCode::Left,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => {
-                self.move_cursor_left();
-            }
-            KeyEvent {
-                code: KeyCode::Right,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => {
-                self.move_cursor_right();
-            }
-            KeyEvent {
-                code: KeyCode::Char('b'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_left();
-            }
-            KeyEvent {
-                code: KeyCode::Char('f'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_right();
-            }
-            KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_up();
-            }
-            KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_down();
-            }
-            // Some terminals send Alt+Arrow for word-wise movement:
-            // Option/Left -> Alt+Left (previous word start)
-            // Option/Right -> Alt+Right (next word end)
-            KeyEvent {
-                code: KeyCode::Left,
-                modifiers: KeyModifiers::ALT,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Left,
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.set_cursor(self.beginning_of_previous_word());
-            }
-            KeyEvent {
-                code: KeyCode::Right,
-                modifiers: KeyModifiers::ALT,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Right,
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.set_cursor(self.end_of_next_word());
-            }
-            KeyEvent {
-                code: KeyCode::Up, ..
-            } => {
-                self.move_cursor_up();
-            }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            } => {
-                self.move_cursor_down();
-            }
-            KeyEvent {
-                code: KeyCode::Home,
-                ..
-            } => {
-                self.move_cursor_to_beginning_of_line(/*move_up_at_bol*/ false);
-            }
-            KeyEvent {
-                code: KeyCode::Char('a'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_to_beginning_of_line(/*move_up_at_bol*/ true);
-            }
-
-            KeyEvent {
-                code: KeyCode::End, ..
-            } => {
-                self.move_cursor_to_end_of_line(/*move_down_at_eol*/ false);
-            }
-            KeyEvent {
-                code: KeyCode::Char('e'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
-                self.move_cursor_to_end_of_line(/*move_down_at_eol*/ true);
-            }
-            _ => {}
+    pub fn input_with_keymap(&mut self, event: KeyEvent, keymap: &EditorKeymap) {
+        if keymap.insert_newline.is_pressed(event) {
+            self.insert_str("\n");
+            return;
         }
+
+        if keymap.delete_backward_word.is_pressed(event) {
+            self.delete_backward_word();
+            return;
+        }
+
+        // Windows AltGr generates ALT|CONTROL. Preserve typed characters for AltGr users
+        // unless a specific shortcut already matched above.
+        if let KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers,
+            ..
+        } = event
+            && is_altgr(modifiers)
+        {
+            self.insert_str(&c.to_string());
+            return;
+        }
+
+        if keymap.delete_backward.is_pressed(event) {
+            self.delete_backward(/*n*/ 1);
+            return;
+        }
+        if keymap.delete_forward_word.is_pressed(event) {
+            self.delete_forward_word();
+            return;
+        }
+        if keymap.delete_forward.is_pressed(event) {
+            self.delete_forward(/*n*/ 1);
+            return;
+        }
+        if keymap.kill_line_start.is_pressed(event) {
+            self.kill_to_beginning_of_line();
+            return;
+        }
+        if keymap.kill_line_end.is_pressed(event) {
+            self.kill_to_end_of_line();
+            return;
+        }
+        if keymap.yank.is_pressed(event) {
+            self.yank();
+            return;
+        }
+        if keymap.move_word_left.is_pressed(event) {
+            self.set_cursor(self.beginning_of_previous_word());
+            return;
+        }
+        if keymap.move_word_right.is_pressed(event) {
+            self.set_cursor(self.end_of_next_word());
+            return;
+        }
+        if keymap.move_left.is_pressed(event) {
+            self.move_cursor_left();
+            return;
+        }
+        if keymap.move_right.is_pressed(event) {
+            self.move_cursor_right();
+            return;
+        }
+        if keymap.move_up.is_pressed(event) {
+            self.move_cursor_up();
+            return;
+        }
+        if keymap.move_down.is_pressed(event) {
+            self.move_cursor_down();
+            return;
+        }
+        if keymap.move_line_start.is_pressed(event) {
+            let move_up_at_bol = matches!(
+                event,
+                KeyEvent {
+                    code: KeyCode::Char('a'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }
+            );
+            self.move_cursor_to_beginning_of_line(move_up_at_bol);
+            return;
+        }
+        if keymap.move_line_end.is_pressed(event) {
+            let move_down_at_eol = matches!(
+                event,
+                KeyEvent {
+                    code: KeyCode::Char('e'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }
+            );
+            self.move_cursor_to_end_of_line(move_down_at_eol);
+            return;
+        }
+
+        if let KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+            ..
+        } = event
+        {
+            // Insert plain characters (and Shift-modified). Do not insert when ALT is held,
+            // because many terminals map Option/Meta combos to ALT+<char>.
+            if c.is_ascii_control() {
+                return;
+            }
+            self.insert_str(&c.to_string());
+            return;
+        }
+
+        let _ = event;
     }
 
     // ####### Input Functions #######
@@ -1217,36 +1137,55 @@ impl TextArea {
         else {
             return 0;
         };
-        let is_separator = is_word_separator(ch);
-        let mut start = first_non_ws_idx;
-        for (idx, ch) in prefix[..first_non_ws_idx].char_indices().rev() {
-            if ch.is_whitespace() || is_word_separator(ch) != is_separator {
-                start = idx + ch.len_utf8();
-                break;
+        let run_start = prefix[..first_non_ws_idx]
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| ch.is_whitespace())
+            .map_or(0, |(idx, ch)| idx + ch.len_utf8());
+        let run_end = first_non_ws_idx + ch.len_utf8();
+        let pieces = split_word_pieces(&prefix[run_start..run_end]);
+        let mut pieces = pieces.into_iter().rev().peekable();
+        let Some((piece_start, piece)) = pieces.next() else {
+            return run_start;
+        };
+        let mut start = run_start + piece_start;
+
+        if piece.chars().all(is_word_separator) {
+            while let Some((idx, piece)) = pieces.peek() {
+                if !piece.chars().all(is_word_separator) {
+                    break;
+                }
+                start = run_start + *idx;
+                pieces.next();
             }
-            start = idx;
         }
+
         self.adjust_pos_out_of_elements(start, /*prefer_start*/ true)
     }
 
     pub(crate) fn end_of_next_word(&self) -> usize {
-        let Some(first_non_ws) = self.text[self.cursor_pos..].find(|c: char| !c.is_whitespace())
-        else {
+        let suffix = &self.text[self.cursor_pos..];
+        let Some(first_non_ws) = suffix.find(|ch: char| !ch.is_whitespace()) else {
             return self.text.len();
         };
-        let word_start = self.cursor_pos + first_non_ws;
-        let mut iter = self.text[word_start..].char_indices();
-        let Some((_, first_ch)) = iter.next() else {
-            return word_start;
+        let run = &suffix[first_non_ws..];
+        let run = &run[..run.find(char::is_whitespace).unwrap_or(run.len())];
+        let mut pieces = split_word_pieces(run).into_iter().peekable();
+        let Some((start, piece)) = pieces.next() else {
+            return self.cursor_pos + first_non_ws;
         };
-        let is_separator = is_word_separator(first_ch);
-        let mut end = self.text.len();
-        for (idx, ch) in iter {
-            if ch.is_whitespace() || is_word_separator(ch) != is_separator {
-                end = word_start + idx;
-                break;
+        let word_start = self.cursor_pos + first_non_ws + start;
+        let mut end = word_start + piece.len();
+        if piece.chars().all(is_word_separator) {
+            while let Some((idx, piece)) = pieces.peek() {
+                if !piece.chars().all(is_word_separator) {
+                    break;
+                }
+                end = self.cursor_pos + first_non_ws + *idx + piece.len();
+                pieces.next();
             }
         }
+
         self.adjust_pos_out_of_elements(end, /*prefer_start*/ false)
     }
 
@@ -1322,7 +1261,7 @@ impl TextArea {
 impl WidgetRef for &TextArea {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let lines = self.wrapped_lines(area.width);
-        self.render_lines(area, buf, &lines, 0..lines.len());
+        self.render_lines(area, buf, &lines, 0..lines.len(), Style::default(), &[]);
     }
 }
 
@@ -1336,7 +1275,7 @@ impl StatefulWidgetRef for &TextArea {
 
         let start = scroll as usize;
         let end = (scroll + area.height).min(lines.len() as u16) as usize;
-        self.render_lines(area, buf, &lines, start..end);
+        self.render_lines(area, buf, &lines, start..end, Style::default(), &[]);
     }
 }
 
@@ -1347,6 +1286,7 @@ impl TextArea {
         buf: &mut Buffer,
         state: &mut TextAreaState,
         mask_char: char,
+        base_style: Style,
     ) {
         let lines = self.wrapped_lines(area.width);
         let scroll = self.effective_scroll(area.height, &lines, state.scroll);
@@ -1354,7 +1294,46 @@ impl TextArea {
 
         let start = scroll as usize;
         let end = (scroll + area.height).min(lines.len() as u16) as usize;
-        self.render_lines_masked(area, buf, &lines, start..end, mask_char);
+        self.render_lines_masked(area, buf, &lines, start..end, mask_char, base_style);
+    }
+
+    /// Render the textarea with an explicit `base_style` applied to every cell,
+    /// used by the Zellij code path to override inherited terminal styles.
+    pub(crate) fn render_ref_styled(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &mut TextAreaState,
+        base_style: Style,
+    ) {
+        let lines = self.wrapped_lines(area.width);
+        let scroll = self.effective_scroll(area.height, &lines, state.scroll);
+        state.scroll = scroll;
+
+        let start = scroll as usize;
+        let end = (scroll + area.height).min(lines.len() as u16) as usize;
+        self.render_lines(area, buf, &lines, start..end, base_style, &[]);
+    }
+
+    /// Render the textarea with `base_style` plus additional render-only highlight ranges.
+    ///
+    /// Highlight ranges are byte ranges in `self.text`. They affect only the buffer rendering and
+    /// do not mutate the editable text, cursor, element metadata, or wrapping cache.
+    pub(crate) fn render_ref_styled_with_highlights(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &mut TextAreaState,
+        base_style: Style,
+        highlights: &[(Range<usize>, Style)],
+    ) {
+        let lines = self.wrapped_lines(area.width);
+        let scroll = self.effective_scroll(area.height, &lines, state.scroll);
+        state.scroll = scroll;
+
+        let start = scroll as usize;
+        let end = (scroll + area.height).min(lines.len() as u16) as usize;
+        self.render_lines(area, buf, &lines, start..end, base_style, highlights);
     }
 
     fn render_lines(
@@ -1363,13 +1342,16 @@ impl TextArea {
         buf: &mut Buffer,
         lines: &[Range<usize>],
         range: std::ops::Range<usize>,
+        base_style: Style,
+        highlights: &[(Range<usize>, Style)],
     ) {
         for (row, idx) in range.enumerate() {
             let r = &lines[idx];
             let y = area.y + row as u16;
             let line_range = r.start..r.end - 1;
-            // Draw base line with default style.
-            buf.set_string(area.x, y, &self.text[line_range.clone()], Style::default());
+            buf.set_style(Rect::new(area.x, y, area.width, 1), base_style);
+            // Draw base line with the provided style.
+            buf.set_string(area.x, y, &self.text[line_range.clone()], base_style);
 
             // Overlay styled segments for elements that intersect this line.
             for elem in &self.elements {
@@ -1381,8 +1363,21 @@ impl TextArea {
                 }
                 let styled = &self.text[overlap_start..overlap_end];
                 let x_off = self.text[line_range.start..overlap_start].width() as u16;
-                let style = Style::default().fg(Color::Cyan);
+                let style = base_style.fg(ratatui::style::Color::Cyan);
                 buf.set_string(area.x + x_off, y, styled, style);
+            }
+
+            // Overlay render-only highlight ranges last so transient search highlighting remains
+            // visible even when it intersects attachment placeholders or other styled elements.
+            for (highlight_range, style) in highlights {
+                let overlap_start = highlight_range.start.max(line_range.start);
+                let overlap_end = highlight_range.end.min(line_range.end);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+                let highlighted = &self.text[overlap_start..overlap_end];
+                let x_off = self.text[line_range.start..overlap_start].width() as u16;
+                buf.set_string(area.x + x_off, y, highlighted, *style);
             }
         }
     }
@@ -1394,16 +1389,18 @@ impl TextArea {
         lines: &[Range<usize>],
         range: std::ops::Range<usize>,
         mask_char: char,
+        base_style: Style,
     ) {
         for (row, idx) in range.enumerate() {
             let r = &lines[idx];
             let y = area.y + row as u16;
             let line_range = r.start..r.end - 1;
+            buf.set_style(Rect::new(area.x, y, area.width, 1), base_style);
             let masked = self.text[line_range.clone()]
                 .chars()
                 .map(|_| mask_char)
                 .collect::<String>();
-            buf.set_string(area.x, y, &masked, Style::default());
+            buf.set_string(area.x, y, &masked, base_style);
         }
     }
 }
@@ -1840,6 +1837,37 @@ mod tests {
     }
 
     #[test]
+    fn c0_control_chars_respect_unbound_editor_movement() {
+        let mut t = ta_with("a\nb");
+        t.set_cursor(/*pos*/ 2);
+        let mut keymap = RuntimeKeymap::defaults().editor;
+        keymap.move_up.clear();
+
+        t.input_with_keymap(
+            KeyEvent::new(KeyCode::Char('\u{0010}'), KeyModifiers::NONE),
+            &keymap,
+        );
+
+        assert_eq!(t.cursor(), 2);
+    }
+
+    #[test]
+    fn c0_control_chars_respect_remapped_editor_movement() {
+        let mut t = ta_with("a\nb");
+        t.set_cursor(/*pos*/ 0);
+        let mut keymap = RuntimeKeymap::defaults().editor;
+        keymap.move_up.clear();
+        keymap.move_down = vec![crate::key_hint::ctrl(KeyCode::Char('p'))];
+
+        t.input_with_keymap(
+            KeyEvent::new(KeyCode::Char('\u{0010}'), KeyModifiers::NONE),
+            &keymap,
+        );
+
+        assert_eq!(t.cursor(), 2);
+    }
+
+    #[test]
     fn delete_backward_word_alt_keys() {
         // Test the custom Alt+Ctrl+h binding
         let mut t = ta_with("hello world");
@@ -2019,6 +2047,80 @@ mod tests {
     }
 
     #[test]
+    fn word_navigation_cjk_each_char_is_boundary() {
+        let text = "你好世界";
+        let mut t = ta_with(text);
+
+        t.set_cursor(/*pos*/ text.len());
+        assert_eq!(t.beginning_of_previous_word(), 9);
+
+        t.set_cursor(/*pos*/ 9);
+        assert_eq!(t.beginning_of_previous_word(), 6);
+
+        t.set_cursor(/*pos*/ 6);
+        assert_eq!(t.beginning_of_previous_word(), 3);
+
+        t.set_cursor(/*pos*/ 3);
+        assert_eq!(t.beginning_of_previous_word(), 0);
+    }
+
+    #[test]
+    fn word_navigation_cjk_forward() {
+        let text = "你好世界";
+        let mut t = ta_with(text);
+
+        t.set_cursor(/*pos*/ 0);
+        assert_eq!(t.end_of_next_word(), 3);
+
+        t.set_cursor(/*pos*/ 3);
+        assert_eq!(t.end_of_next_word(), 6);
+
+        t.set_cursor(/*pos*/ 6);
+        assert_eq!(t.end_of_next_word(), 9);
+
+        t.set_cursor(/*pos*/ 9);
+        assert_eq!(t.end_of_next_word(), 12);
+    }
+
+    #[test]
+    fn word_navigation_mixed_ascii_cjk() {
+        let text = "hello你好";
+        let mut t = ta_with(text);
+
+        t.set_cursor(/*pos*/ 0);
+        assert_eq!(t.end_of_next_word(), 5);
+
+        t.set_cursor(/*pos*/ 5);
+        assert_eq!(t.end_of_next_word(), 8);
+
+        t.set_cursor(/*pos*/ text.len());
+        assert_eq!(t.beginning_of_previous_word(), 8);
+
+        t.set_cursor(/*pos*/ 8);
+        assert_eq!(t.beginning_of_previous_word(), 5);
+
+        t.set_cursor(/*pos*/ 5);
+        assert_eq!(t.beginning_of_previous_word(), 0);
+    }
+
+    #[test]
+    fn word_navigation_preserves_separator_breaks_within_unicode_segments() {
+        let mut t = ta_with("can't 32.3 foo.bar");
+
+        t.set_cursor(/*pos*/ 5);
+        assert_eq!(t.beginning_of_previous_word(), 4);
+
+        t.set_cursor(/*pos*/ 4);
+        assert_eq!(t.beginning_of_previous_word(), 3);
+
+        t.set_cursor(/*pos*/ 10);
+        assert_eq!(t.beginning_of_previous_word(), 9);
+
+        t.set_cursor(/*pos*/ 18);
+        assert_eq!(t.beginning_of_previous_word(), 15);
+    }
+
+    #[test]
     fn wrapping_and_cursor_positions() {
         let mut t = ta_with("hello world here");
         let area = Rect::new(0, 0, 6, 10); // width 6 -> wraps words
@@ -2044,6 +2146,43 @@ mod tests {
         // After render, state.scroll should be adjusted so cursor row fits
         let effective_lines = t.desired_height(small_area.width);
         assert!(state.scroll < effective_lines);
+    }
+
+    #[test]
+    fn render_highlights_apply_style_without_mutating_text() {
+        let t = ta_with("hello world");
+        let area = Rect::new(0, 0, 20, 1);
+        let mut state = TextAreaState::default();
+        let mut buf = Buffer::empty(area);
+        let highlight_style = Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+
+        t.render_ref_styled_with_highlights(
+            area,
+            &mut buf,
+            &mut state,
+            Style::default(),
+            &[(6..11, highlight_style)],
+        );
+
+        assert_eq!(t.text(), "hello world");
+        assert!(
+            !buf[(0, 0)]
+                .style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        );
+        assert!(
+            buf[(6, 0)]
+                .style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        );
+        assert!(
+            buf[(10, 0)]
+                .style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        );
     }
 
     #[test]
