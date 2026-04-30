@@ -865,7 +865,7 @@ pub(crate) struct ChatWidget {
     /// Whether this turn already produced a copyable response.
     ///
     /// `TurnComplete.last_agent_message` is a fallback source: use it only when no earlier
-    /// agent/plan/review item recorded copyable markdown for the turn. This gives item-level
+    /// agent, plan, or review item recorded copyable markdown for the turn. This gives item-level
     /// sources precedence and avoids duplicating the same final answer when both event shapes are
     /// emitted.
     saw_copy_source_this_turn: bool,
@@ -1032,7 +1032,7 @@ pub(crate) struct ChatWidget {
     // Runtime metrics accumulated across delta snapshots for the active turn.
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<usize>>,
-    // Feedback sink for /feedback
+    // Feedback sink for app-server-initiated feedback flows.
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
@@ -2590,6 +2590,7 @@ impl ChatWidget {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn open_feedback_consent(&mut self, category: crate::app_event::FeedbackCategory) {
         let snapshot = self.feedback.snapshot(self.thread_id);
         let params = crate::bottom_pane::feedback_upload_consent_params(
@@ -4787,7 +4788,7 @@ impl ChatWidget {
             return "Goal budget reached - the turn was stopped.".to_string();
         }
 
-        "Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.".to_string()
+        "Conversation interrupted - tell the model what to do differently.".to_string()
     }
 
     fn on_deprecation_notice(&mut self, event: DeprecationNoticeEvent) {

@@ -33,7 +33,6 @@ pub enum SlashCommand {
     Fork,
     Init,
     Compact,
-    Plan,
     Goal,
     Collab,
     Agent,
@@ -53,7 +52,6 @@ pub enum SlashCommand {
     Logout,
     Quit,
     Exit,
-    Feedback,
     Rollout,
     Ps,
     #[strum(to_string = "stop", serialize = "clean")]
@@ -76,7 +74,6 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
-            SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
@@ -107,7 +104,6 @@ impl SlashCommand {
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
-            SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
@@ -143,7 +139,6 @@ impl SlashCommand {
             self,
             SlashCommand::Review
                 | SlashCommand::Rename
-                | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Fast
                 | SlashCommand::Mcp
@@ -181,7 +176,6 @@ impl SlashCommand {
             | SlashCommand::Experimental
             | SlashCommand::Memories
             | SlashCommand::Review
-            | SlashCommand::Plan
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
@@ -202,7 +196,6 @@ impl SlashCommand {
             | SlashCommand::Title
             | SlashCommand::Statusline
             | SlashCommand::AutoReview
-            | SlashCommand::Feedback
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Side => true,

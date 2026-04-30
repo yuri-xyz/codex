@@ -7,7 +7,6 @@ fn plan_mode_nudge_matches_only_standalone_plain_text_keyword() {
     assert!(contains_plan_keyword("Make a Plan first."));
     assert!(!contains_plan_keyword("plane"));
     assert!(!contains_plan_keyword("planning"));
-    assert!(contains_plan_keyword("/plan"));
     assert!(contains_plan_keyword("!plan"));
 }
 
@@ -18,7 +17,7 @@ async fn plan_mode_nudge_shows_only_for_eligible_default_mode_drafts() {
     chat.pre_draw_tick();
     assert!(chat.bottom_pane.plan_mode_nudge_visible());
 
-    chat.set_composer_text("/plan".to_string(), Vec::new(), Vec::new());
+    chat.set_composer_text("/review plan".to_string(), Vec::new(), Vec::new());
     chat.pre_draw_tick();
     assert!(!chat.bottom_pane.plan_mode_nudge_visible());
 
@@ -1422,71 +1421,6 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
             panic!("expected Op::UserTurn with code collab mode, got {other:?}")
         }
     }
-}
-
-#[tokio::test]
-async fn plan_slash_command_switches_to_plan_mode() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
-    let initial = chat.current_collaboration_mode().clone();
-
-    chat.dispatch_command(SlashCommand::Plan);
-
-    while let Ok(event) = rx.try_recv() {
-        assert!(
-            matches!(event, AppEvent::InsertHistoryCell(_)),
-            "plan should not emit a non-history app event: {event:?}"
-        );
-    }
-    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
-    assert_eq!(chat.current_collaboration_mode(), &initial);
-}
-
-#[tokio::test]
-async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
-
-    let configured = codex_protocol::protocol::SessionConfiguredEvent {
-        session_id: ThreadId::new(),
-        forked_from_id: None,
-        thread_name: None,
-        model: "test-model".to_string(),
-        model_provider_id: "test-provider".to_string(),
-        service_tier: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: PermissionProfile::read_only(),
-        cwd: test_path_buf("/home/user/project").abs(),
-        reasoning_effort: Some(ReasoningEffortConfig::default()),
-        history_log_id: 0,
-        history_entry_count: 0,
-        initial_messages: None,
-        network_proxy: None,
-        rollout_path: None,
-    };
-    chat.handle_codex_event(Event {
-        id: "configured".into(),
-        msg: EventMsg::SessionConfigured(configured),
-    });
-
-    chat.bottom_pane
-        .set_composer_text("/plan build the plan".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-
-    let items = match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => items,
-        other => panic!("expected Op::UserTurn, got {other:?}"),
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(
-        items[0],
-        UserInput::Text {
-            text: "build the plan".to_string(),
-            text_elements: Vec::new(),
-        }
-    );
-    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
 }
 
 #[tokio::test]

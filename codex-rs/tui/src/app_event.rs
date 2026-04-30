@@ -718,11 +718,6 @@ pub(crate) enum AppEvent {
         include_logs: bool,
     },
 
-    /// Open the upload consent popup for feedback after selecting a category.
-    OpenFeedbackConsent {
-        category: FeedbackCategory,
-    },
-
     /// Submit feedback for the current thread via the app-server feedback RPC.
     SubmitFeedback {
         category: FeedbackCategory,
@@ -827,6 +822,7 @@ pub(crate) enum ExitMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum FeedbackCategory {
     BadResult,
     GoodResult,

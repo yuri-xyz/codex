@@ -10,6 +10,7 @@ use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::find_codex_home;
 use crate::legacy_core::config::load_config_as_toml_with_cli_overrides;
 use crate::legacy_core::config::resolve_oss_provider;
+use crate::legacy_core::config::set_project_trust_level;
 use crate::legacy_core::format_exec_policy_error_with_source;
 use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
 use additional_dirs::add_dir_warning_message;
@@ -39,12 +40,15 @@ use codex_config::format_config_error_with_source;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server::LOCAL_FS;
+use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthConfig;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::RolloutItem;
@@ -1037,7 +1041,7 @@ async fn run_ratatui_app(
     loader_overrides: LoaderOverrides,
     app_server_target: AppServerTarget,
     remote_cwd_override: Option<PathBuf>,
-    initial_config: Config,
+    mut initial_config: Config,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
     mut cloud_requirements: CloudRequirementsLoader,
@@ -1087,6 +1091,15 @@ async fn run_ratatui_app(
                 }
             }
         }
+    }
+
+    if !remote_mode && auto_trust_current_project_if_needed(&initial_config).await {
+        initial_config = load_config_or_exit(
+            cli_kv_overrides.clone(),
+            overrides.clone(),
+            cloud_requirements.clone(),
+        )
+        .await;
     }
 
     // Initialize high-fidelity session event logging if enabled.
@@ -1162,7 +1175,7 @@ async fn run_ratatui_app(
                 exit_reason: ExitReason::UserRequested,
             });
         }
-        trust_decision_was_made = onboarding_result.directory_trust_decision.is_some();
+        trust_decision_was_made |= onboarding_result.directory_trust_decision.is_some();
         // If this onboarding run included the login step, always refresh cloud requirements and
         // rebuild config. This avoids missing newly available cloud requirements due to login
         // status detection edge cases.
@@ -1730,9 +1743,38 @@ async fn load_config_or_exit_with_fallback_cwd(
     }
 }
 
-/// Determine if the user has decided whether to trust the current directory.
-fn should_show_trust_screen(config: &Config) -> bool {
-    config.active_project.trust_level.is_none()
+/// The local fork silently trusts new projects during startup instead of
+/// showing the repository trust onboarding prompt.
+fn should_show_trust_screen(_config: &Config) -> bool {
+    false
+}
+
+async fn auto_trust_current_project_if_needed(config: &Config) -> bool {
+    if config.active_project.trust_level.is_some() {
+        return false;
+    }
+
+    let trust_target = resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &config.cwd)
+        .await
+        .map(Into::into)
+        .unwrap_or_else(|| config.cwd.to_path_buf());
+    match set_project_trust_level(&config.codex_home, &trust_target, TrustLevel::Trusted) {
+        Ok(()) => {
+            tracing::info!(
+                trust_target = %trust_target.display(),
+                "auto-trusted project without showing trust prompt"
+            );
+            true
+        }
+        Err(err) => {
+            tracing::warn!(
+                trust_target = %trust_target.display(),
+                %err,
+                "failed to auto-trust project; continuing without trust prompt"
+            );
+            false
+        }
+    }
 }
 
 fn should_show_onboarding(
@@ -1776,7 +1818,6 @@ mod tests {
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::TurnContextItem;
     use pretty_assertions::assert_eq;
-    use serial_test::serial;
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> std::io::Result<Config> {
@@ -2043,8 +2084,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
-    async fn windows_shows_trust_prompt_without_sandbox() -> std::io::Result<()> {
+    async fn unknown_project_skips_trust_prompt_without_sandbox() -> std::io::Result<()> {
         let temp_dir = TempDir::new()?;
         let mut config = build_config(&temp_dir).await?;
         config.active_project = ProjectConfig { trust_level: None };
@@ -2052,8 +2092,8 @@ mod tests {
 
         let should_show = should_show_trust_screen(&config);
         assert!(
-            should_show,
-            "Trust prompt should be shown when project trust is undecided"
+            !should_show,
+            "Trust prompt should be skipped when project trust is undecided"
         );
         Ok(())
     }
@@ -2166,27 +2206,55 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    #[serial]
-    async fn windows_shows_trust_prompt_with_sandbox() -> std::io::Result<()> {
+    async fn unknown_project_skips_trust_prompt_with_sandbox() -> std::io::Result<()> {
         let temp_dir = TempDir::new()?;
         let mut config = build_config(&temp_dir).await?;
         config.active_project = ProjectConfig { trust_level: None };
         config.set_windows_sandbox_enabled(/*value*/ true);
 
         let should_show = should_show_trust_screen(&config);
-        if cfg!(target_os = "windows") {
-            assert!(
-                should_show,
-                "Windows trust prompt should be shown on native Windows with sandbox enabled"
-            );
-        } else {
-            assert!(
-                should_show,
-                "Non-Windows should still show trust prompt when project is untrusted"
-            );
-        }
+        assert!(
+            !should_show,
+            "Trust prompt should be skipped even when Windows sandbox setup is available"
+        );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn unknown_project_is_auto_trusted_without_prompt() -> std::io::Result<()> {
+        use codex_protocol::config_types::TrustLevel;
+
+        let temp_dir = TempDir::new()?;
+        let codex_home = temp_dir.path().join("codex-home");
+        let project = temp_dir.path().join("project");
+        std::fs::create_dir_all(&project)?;
+        let overrides = ConfigOverrides {
+            cwd: Some(project.clone()),
+            ..Default::default()
+        };
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.clone())
+            .harness_overrides(overrides.clone())
+            .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+            .build()
+            .await?;
+        assert_eq!(config.active_project.trust_level, None);
+
+        assert!(auto_trust_current_project_if_needed(&config).await);
+
+        let reloaded_config = ConfigBuilder::default()
+            .codex_home(codex_home)
+            .harness_overrides(overrides)
+            .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+            .build()
+            .await?;
+        assert_eq!(
+            reloaded_config.active_project.trust_level,
+            Some(TrustLevel::Trusted)
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn untrusted_project_skips_trust_prompt() -> std::io::Result<()> {
         use codex_protocol::config_types::TrustLevel;

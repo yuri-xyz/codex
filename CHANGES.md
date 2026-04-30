@@ -47,3 +47,6 @@ git log --author="yuri-xyz" --oneline
 - Suppressed noisy TUI settings-save errors when the active `config.toml` lives in the read-only Nix store, while keeping other config persistence failures visible.
 - Restyled the TUI composer input to use a Claude Code-inspired top/bottom border and triangle prompt marker while leaving sent-message history styling unchanged.
 - Hardened live thread resume so unmaterialized or ephemeral running threads fail early instead of falling into a stack-heavy stored-history resume path.
+- Removed the startup repository trust prompt by silently trusting new local projects and continuing directly into the next startup phase.
+- Removed the `/feedback` TUI slash command from command parsing and the slash-command picker.
+- Removed the `/plan` TUI slash command while keeping Plan mode available through collaboration-mode controls.

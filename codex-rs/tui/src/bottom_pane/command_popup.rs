@@ -359,10 +359,6 @@ mod tests {
             !cmds.contains(&"collab"),
             "expected '/collab' to be hidden when collaboration modes are disabled, got {cmds:?}"
         );
-        assert!(
-            !cmds.contains(&"plan"),
-            "expected '/plan' to be hidden when collaboration modes are disabled, got {cmds:?}"
-        );
     }
 
     #[test]
@@ -384,28 +380,6 @@ mod tests {
         match popup.selected_item() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "collab"),
             other => panic!("expected collab to be selected for exact match, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn plan_command_visible_when_collaboration_modes_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
-        popup.on_composer_text_change("/plan".to_string());
-
-        match popup.selected_item() {
-            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "plan"),
-            other => panic!("expected plan to be selected for exact match, got {other:?}"),
         }
     }
 

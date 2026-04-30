@@ -56,7 +56,7 @@
 //!
 //! The numeric auto-submit path used by the slash popup performs the same pending-paste expansion
 //! and attachment pruning, and clears pending paste state on success.
-//! Slash commands with arguments (like `/plan` and `/review`) reuse the same preparation path so
+//! Slash commands with arguments (like `/review`) reuse the same preparation path so
 //! pasted content and text elements are preserved when extracting args.
 //!
 //! # Remote Image Rows (Up/Down/Delete)
@@ -2769,7 +2769,7 @@ impl ChatComposer {
     /// full-text offsets to command-arg offsets.
     ///
     /// Callers that already staged slash-command history should normally pass `false` for
-    /// `record_history`; otherwise a command such as `/plan investigate` would be entered into
+    /// `record_history`; otherwise a command such as `/review investigate` would be entered into
     /// local recall through both the slash-command path and the message-submission path.
     pub(crate) fn prepare_inline_args_submission(
         &mut self,
@@ -7495,13 +7495,13 @@ mod tests {
         );
         composer.set_collaboration_modes_enabled(/*enabled*/ true);
 
-        type_chars_humanlike(&mut composer, &['/', 'p', 'l', 'a', 'n', ' ']);
+        type_chars_humanlike(&mut composer, &['/', 'r', 'e', 'v', 'i', 'e', 'w', ' ']);
 
         let text = composer.textarea.text().to_string();
         let elements = composer.textarea.text_elements();
-        assert_eq!(text, "/plan ");
+        assert_eq!(text, "/review ");
         assert_eq!(elements.len(), 1);
-        assert_eq!(elements[0].placeholder(&text), Some("/plan"));
+        assert_eq!(elements[0].placeholder(&text), Some("/review"));
     }
 
     #[test]
@@ -7695,16 +7695,16 @@ mod tests {
         );
         composer.set_collaboration_modes_enabled(/*enabled*/ true);
 
-        type_chars_humanlike(&mut composer, &['/', 'p', 'l', 'a', 'n', ' ']);
+        type_chars_humanlike(&mut composer, &['/', 'r', 'e', 'v', 'i', 'e', 'w', ' ']);
         let placeholder = local_image_label_text(/*label_number*/ 1);
-        composer.attach_image(PathBuf::from("/tmp/plan.png"));
+        composer.attach_image(PathBuf::from("/tmp/review.png"));
 
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         match result {
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
-                assert_eq!(cmd.command(), "plan");
+                assert_eq!(cmd.command(), "review");
                 assert_eq!(args, placeholder);
                 assert_eq!(text_elements.len(), 1);
                 assert_eq!(
@@ -7712,7 +7712,7 @@ mod tests {
                     Some(placeholder.as_str())
                 );
             }
-            _ => panic!("expected CommandWithArgs for /plan with args"),
+            _ => panic!("expected CommandWithArgs for /review with args"),
         }
     }
 
@@ -9059,7 +9059,7 @@ mod tests {
             "'/re' should activate slash popup via prefix match"
         );
 
-        // Case 3: fuzzy match "/ac" (subsequence of /compact and /feedback)
+        // Case 3: fuzzy match "/ac" (subsequence of /compact)
         composer.set_text_content("/ac".to_string(), Vec::new(), Vec::new());
         assert!(
             matches!(composer.active_popup, ActivePopup::Command(_)),
@@ -9139,25 +9139,29 @@ mod tests {
         );
         composer.set_collaboration_modes_enabled(/*enabled*/ true);
 
-        composer.set_text_content("/plan investigate this".to_string(), Vec::new(), Vec::new());
+        composer.set_text_content(
+            "/review investigate this".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
         composer.active_popup = ActivePopup::None;
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         match result {
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
-                assert_eq!(cmd, SlashCommand::Plan);
+                assert_eq!(cmd, SlashCommand::Review);
                 assert_eq!(args, "investigate this");
                 assert!(text_elements.is_empty());
             }
-            other => panic!("expected inline /plan command, got {other:?}"),
+            other => panic!("expected inline /review command, got {other:?}"),
         }
         composer.record_pending_slash_command_history();
 
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(result, InputResult::None);
-        assert_eq!(composer.current_text(), "/plan investigate this");
+        assert_eq!(composer.current_text(), "/review investigate this");
     }
 
     #[test]
