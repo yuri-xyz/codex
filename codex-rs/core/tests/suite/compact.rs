@@ -18,7 +18,6 @@ use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
@@ -32,6 +31,7 @@ use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -69,8 +69,6 @@ const DUMMY_CALL_ID: &str = "call-multi-auto";
 const FUNCTION_CALL_LIMIT_MSG: &str = "function call limit push";
 const POST_AUTO_USER_MSG: &str = "post auto follow-up";
 const PRETURN_CONTEXT_DIFF_CWD: &str = "/tmp/PRETURN_CONTEXT_DIFF_CWD";
-
-pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
 
 fn disabled_permission_user_turn(text: impl Into<String>, cwd: PathBuf, model: String) -> Op {
     let (sandbox_policy, permission_profile) =
@@ -208,6 +206,20 @@ async fn assert_compaction_uses_turn_lifecycle_id(codex: &std::sync::Arc<codex_c
         "compaction item completion should use the turn event id"
     );
 }
+
+async fn wait_for_context_compaction_completed(codex: &Arc<codex_core::CodexThread>) {
+    wait_for_event(codex, |ev| {
+        matches!(
+            ev,
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::ContextCompaction(_),
+                ..
+            })
+        )
+    })
+    .await;
+}
+
 fn context_snapshot_options() -> ContextSnapshotOptions {
     ContextSnapshotOptions::default()
         .strip_capability_instructions()
@@ -279,12 +291,7 @@ async fn summarize_context_three_requests_and_instructions() {
 
     // 2) Summarize – second hit should include the summarization prompt.
     codex.submit(Op::Compact).await.unwrap();
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    wait_for_context_compaction_completed(&codex).await;
 
     // 3) Next user input – third hit; history should include only the summary.
     codex
@@ -480,12 +487,7 @@ async fn manual_compact_uses_custom_prompt() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.expect("trigger compact");
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    wait_for_context_compaction_completed(&codex).await;
 
     let requests = request_log.requests();
     assert_eq!(
@@ -2159,11 +2161,6 @@ async fn manual_compact_retries_after_context_window_error() {
         "background event should mention trimmed item count: {}",
         event.message
     );
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact retry");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();

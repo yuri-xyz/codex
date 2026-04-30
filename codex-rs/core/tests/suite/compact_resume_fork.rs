@@ -7,7 +7,6 @@
 //! request payload that Codex would send to the model and assert that the
 //! model-visible history matches the expected sequence of messages.
 
-use super::compact::COMPACT_WARNING_MESSAGE;
 use super::compact::FIRST_REPLY;
 use super::compact::SUMMARY_TEXT;
 use anyhow::Result;
@@ -19,9 +18,10 @@ use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::Op;
-use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
@@ -797,18 +797,16 @@ async fn compact_conversation(conversation: &Arc<CodexThread>) {
         .submit(Op::Compact)
         .await
         .expect("compact conversation");
-    let warning_event = wait_for_event(conversation, |ev| {
+    wait_for_event(conversation, |ev| {
         matches!(
             ev,
-            EventMsg::Warning(WarningEvent { message }) if message == COMPACT_WARNING_MESSAGE
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::ContextCompaction(_),
+                ..
+            })
         )
     })
     .await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
-    wait_for_event(conversation, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 }
 
 fn fetch_conversation_path(conversation: &Arc<CodexThread>) -> std::path::PathBuf {

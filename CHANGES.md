@@ -50,3 +50,4 @@ git log --author="yuri-xyz" --oneline
 - Removed the startup repository trust prompt by silently trusting new local projects and continuing directly into the next startup phase.
 - Removed the `/feedback` TUI slash command from command parsing and the slash-command picker.
 - Removed the `/plan` TUI slash command while keeping Plan mode available through collaboration-mode controls.
+- Suppressed the post-compaction long-thread accuracy warning so compaction completes without nudging users to start a new thread.
