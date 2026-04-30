@@ -168,7 +168,7 @@ async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
         resume_err
             .error
             .message
-            .contains("no rollout found for thread id"),
+            .contains("thread/resume is unavailable before first user message"),
         "unexpected resume error: {}",
         resume_err.error.message
     );

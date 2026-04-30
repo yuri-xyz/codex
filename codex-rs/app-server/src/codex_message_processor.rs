@@ -4448,16 +4448,36 @@ impl CodexMessageProcessor {
                 )));
             }
 
-            if let (Some(requested_path), Some(active_path)) = (
-                params.path.as_ref(),
-                existing_thread.rollout_path().as_ref(),
-            ) && requested_path != active_path
-            {
-                return Err(invalid_request(format!(
-                    "cannot resume running thread {existing_thread_id} with mismatched path: requested `{}`, active `{}`",
-                    requested_path.display(),
-                    active_path.display()
-                )));
+            let active_path = existing_thread.rollout_path();
+            match active_path.as_ref() {
+                Some(active_path) => {
+                    if let Some(requested_path) = params.path.as_ref()
+                        && requested_path != active_path
+                    {
+                        return Err(invalid_request(format!(
+                            "cannot resume running thread {existing_thread_id} with mismatched path: requested `{}`, active `{}`",
+                            requested_path.display(),
+                            active_path.display()
+                        )));
+                    }
+
+                    if let Err(err) = tokio::fs::metadata(active_path).await {
+                        if err.kind() == std::io::ErrorKind::NotFound {
+                            return Err(invalid_request(format!(
+                                "thread {existing_thread_id} is not materialized yet; thread/resume is unavailable before first user message"
+                            )));
+                        }
+                        return Err(internal_error(format!(
+                            "failed to inspect rollout `{}` for thread {existing_thread_id}: {err}",
+                            active_path.display()
+                        )));
+                    }
+                }
+                None => {
+                    return Err(invalid_request(format!(
+                        "ephemeral thread {existing_thread_id} does not support thread/resume"
+                    )));
+                }
             }
 
             let source_thread = self

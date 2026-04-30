@@ -5863,9 +5863,10 @@ impl ChatWidget {
         if key_event.kind == KeyEventKind::Press
             && key_hint::meta(KeyCode::Char('s')).is_press(key_event)
             && self.bottom_pane.no_modal_or_popup_active()
-            && self.stash_or_pop_composer_draft() {
-                return;
-            }
+            && self.stash_or_pop_composer_draft()
+        {
+            return;
+        }
 
         if matches!(key_event.code, KeyCode::Esc)
             && matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat)

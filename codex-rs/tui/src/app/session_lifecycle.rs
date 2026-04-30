@@ -206,9 +206,10 @@ impl App {
             return Ok(true);
         }
 
-        let (session, turns, live_attached) = match app_server
-            .resume_thread(self.config.clone(), thread_id)
-            .await
+        let (session, turns, live_attached) = match Box::pin(
+            app_server.resume_thread(self.config.clone(), thread_id),
+        )
+        .await
         {
             Ok(started) => (started.session, started.turns, true),
             Err(resume_err) => {
@@ -217,22 +218,22 @@ impl App {
                     error = %resume_err,
                     "failed to resume live thread for selection; falling back to thread/read"
                 );
-                let (thread, turns) = match app_server
-                    .thread_read(thread_id, /*include_turns*/ true)
-                    .await
-                {
-                    Ok(thread) => {
-                        let turns = thread.turns.clone();
-                        (thread, turns)
-                    }
-                    Err(err) if Self::can_fallback_from_include_turns_error(&err) => {
-                        let thread = app_server
-                            .thread_read(thread_id, /*include_turns*/ false)
+                let (thread, turns) =
+                    match Box::pin(app_server.thread_read(thread_id, /*include_turns*/ true)).await
+                    {
+                        Ok(thread) => {
+                            let turns = thread.turns.clone();
+                            (thread, turns)
+                        }
+                        Err(err) if Self::can_fallback_from_include_turns_error(&err) => {
+                            let thread = Box::pin(
+                                app_server.thread_read(thread_id, /*include_turns*/ false),
+                            )
                             .await?;
-                        (thread, Vec::new())
-                    }
-                    Err(err) => return Err(err),
-                };
+                            (thread, Vec::new())
+                        }
+                        Err(err) => return Err(err),
+                    };
                 if turns.is_empty() {
                     // A `thread/read` fallback without turns would create a blank local replay
                     // channel with no live listener attached, which blocks later real re-attach.

@@ -143,6 +143,8 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
@@ -194,7 +196,6 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
-use crate::style::user_message_style;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
@@ -454,6 +455,9 @@ enum SlashValidation {
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
+const COMPOSER_TEXTAREA_LEFT_MARGIN: u16 = LIVE_PREFIX_COLS;
+const COMPOSER_TEXTAREA_RIGHT_MARGIN: u16 = 1;
+const COMPOSER_PROMPT_OFFSET: u16 = 2;
 
 fn status_line_right_indicator(
     collaboration_mode_indicator: Option<CollaborationModeIndicator>,
@@ -784,9 +788,9 @@ impl ChatComposer {
             Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
             /*top*/ 1,
-            LIVE_PREFIX_COLS,
+            COMPOSER_TEXTAREA_LEFT_MARGIN,
             /*bottom*/ 1,
-            /*right*/ 1,
+            COMPOSER_TEXTAREA_RIGHT_MARGIN,
         ));
         let remote_images_height = self
             .remote_images_lines(textarea_rect.width)
@@ -4022,7 +4026,8 @@ impl Renderable for ChatComposer {
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
-        const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
+        const COLS_WITH_MARGIN: u16 =
+            COMPOSER_TEXTAREA_LEFT_MARGIN + COMPOSER_TEXTAREA_RIGHT_MARGIN;
         let inner_width = width.saturating_sub(COLS_WITH_MARGIN);
         let remote_images_height: u16 = self
             .remote_images_lines(inner_width)
@@ -4320,9 +4325,14 @@ impl ChatComposer {
         mask_char: Option<char>,
     ) {
         let is_zellij = self.is_zellij;
-        let style = user_message_style();
+        let style = Style::default();
         let textarea_style = style.fg(ratatui::style::Color::Reset);
-        Block::default().style(style).render_ref(composer_rect, buf);
+        Block::default()
+            .style(style)
+            .borders(Borders::TOP | Borders::BOTTOM)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ratatui::style::Color::DarkGray))
+            .render_ref(composer_rect, buf);
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.remote_images_lines(remote_images_rect.width))
                 .style(style)
@@ -4340,17 +4350,17 @@ impl ChatComposer {
                         Span::from("!").light_red().bold()
                     }
                 } else if is_zellij {
-                    Span::styled("›", style.fg(ratatui::style::Color::Cyan))
+                    Span::styled("▲", style.fg(ratatui::style::Color::Cyan))
                 } else {
-                    "›".bold()
+                    "▲".bold()
                 }
             } else if is_zellij {
-                Span::styled("›", style.fg(ratatui::style::Color::DarkGray))
+                Span::styled("▲", style.fg(ratatui::style::Color::DarkGray))
             } else {
-                "›".dim()
+                "▲".dim()
             };
             buf.set_span(
-                textarea_rect.x - LIVE_PREFIX_COLS,
+                textarea_rect.x - COMPOSER_PROMPT_OFFSET,
                 textarea_rect.y,
                 &prompt,
                 textarea_rect.width,
@@ -4508,10 +4518,9 @@ mod tests {
         );
 
         let spacing_row = row_to_string(hint_row_idx - 1);
-        assert_eq!(
-            spacing_row.trim(),
-            "",
-            "expected blank spacing row above hints but saw: {spacing_row:?}",
+        assert!(
+            spacing_row.chars().all(|ch| ch == '─' || ch == ' '),
+            "expected composer border or blank spacing row above hints but saw: {spacing_row:?}",
         );
     }
 
