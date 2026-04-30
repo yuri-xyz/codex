@@ -44,3 +44,4 @@ git log --author="yuri-xyz" --oneline
 - Made `Shift+Tab` inside approval confirmations auto-approve the current request and immediately switch the session into `Unrestricted` mode so the rest of the request, and later requests, keep running without prompts until you cycle modes again.
 - Added a `Meta+S` composer stash flow: with a non-empty draft it stashes the current prompt into a new stash group above the input, and with a blank composer it pops the most recently stashed draft back into the composer.
 - Added a direnv-backed Nix development environment so repo tools such as `just`, Rust, OpenSSL, and libclang are loaded automatically when entering the checkout.
+- Suppressed noisy TUI settings-save errors when the active `config.toml` lives in the read-only Nix store, while keeping other config persistence failures visible.

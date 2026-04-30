@@ -1081,12 +1081,16 @@ impl App {
                             "failed to persist model selection"
                         );
                         if let Some(profile) = profile {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save model for profile `{profile}`: {err}"
-                            ));
+                            let profile = profile.to_string();
+                            self.add_config_persistence_error_message(
+                                || format!("Failed to save model for profile `{profile}`: {err}"),
+                                &err,
+                            );
                         } else {
-                            self.chat_widget
-                                .add_error_message(format!("Failed to save default model: {err}"));
+                            self.add_config_persistence_error_message(
+                                || format!("Failed to save default model: {err}"),
+                                &err,
+                            );
                         }
                     }
                 }
@@ -1152,13 +1156,20 @@ impl App {
                             "failed to persist personality selection"
                         );
                         if let Some(profile) = profile {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save personality for profile `{profile}`: {err}"
-                            ));
+                            let profile = profile.to_string();
+                            self.add_config_persistence_error_message(
+                                || {
+                                    format!(
+                                        "Failed to save personality for profile `{profile}`: {err}"
+                                    )
+                                },
+                                &err,
+                            );
                         } else {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save default personality: {err}"
-                            ));
+                            self.add_config_persistence_error_message(
+                                || format!("Failed to save default personality: {err}"),
+                                &err,
+                            );
                         }
                     }
                 }
@@ -1195,13 +1206,20 @@ impl App {
                     Err(err) => {
                         tracing::error!(error = %err, "failed to persist fast mode selection");
                         if let Some(profile) = profile {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save Fast mode for profile `{profile}`: {err}"
-                            ));
+                            let profile = profile.to_string();
+                            self.add_config_persistence_error_message(
+                                || {
+                                    format!(
+                                        "Failed to save Fast mode for profile `{profile}`: {err}"
+                                    )
+                                },
+                                &err,
+                            );
                         } else {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save default Fast mode: {err}"
-                            ));
+                            self.add_config_persistence_error_message(
+                                || format!("Failed to save default Fast mode: {err}"),
+                                &err,
+                            );
                         }
                     }
                 }
@@ -1246,10 +1264,10 @@ impl App {
                             error = %err,
                             "failed to persist realtime audio selection"
                         );
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save realtime {}: {err}",
-                            kind.noun()
-                        ));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to save realtime {}: {err}", kind.noun()),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1363,8 +1381,10 @@ impl App {
                         error = %err,
                         "failed to persist approvals reviewer update"
                     );
-                    self.chat_widget
-                        .add_error_message(format!("Failed to save approvals reviewer: {err}"));
+                    self.add_config_persistence_error_message(
+                        || format!("Failed to save approvals reviewer: {err}"),
+                        &err,
+                    );
                 }
             }
             AppEvent::UpdateFeatureFlags { updates } => {
@@ -1411,9 +1431,10 @@ impl App {
                         error = %err,
                         "failed to persist full access warning acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save full access confirmation preference: {err}"
-                    ));
+                    self.add_config_persistence_error_message(
+                        || format!("Failed to save full access confirmation preference: {err}"),
+                        &err,
+                    );
                 }
             }
             AppEvent::PersistWorldWritableWarningAcknowledged => {
@@ -1426,9 +1447,10 @@ impl App {
                         error = %err,
                         "failed to persist world-writable warning acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save Agent mode warning preference: {err}"
-                    ));
+                    self.add_config_persistence_error_message(
+                        || format!("Failed to save Agent mode warning preference: {err}"),
+                        &err,
+                    );
                 }
             }
             AppEvent::PersistRateLimitSwitchPromptHidden => {
@@ -1441,9 +1463,10 @@ impl App {
                         error = %err,
                         "failed to persist rate limit switch prompt preference"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save rate limit reminder preference: {err}"
-                    ));
+                    self.add_config_persistence_error_message(
+                        || format!("Failed to save rate limit reminder preference: {err}"),
+                        &err,
+                    );
                 }
             }
             AppEvent::PersistPlanModeReasoningEffort(effort) => {
@@ -1475,13 +1498,20 @@ impl App {
                         "failed to persist plan mode reasoning effort"
                     );
                     if let Some(profile) = profile {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save Plan mode reasoning effort for profile `{profile}`: {err}"
-                        ));
+                        let profile = profile.to_string();
+                        self.add_config_persistence_error_message(
+                            || {
+                                format!(
+                                    "Failed to save Plan mode reasoning effort for profile `{profile}`: {err}"
+                                )
+                            },
+                            &err,
+                        );
                     } else {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save Plan mode reasoning effort: {err}"
-                        ));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to save Plan mode reasoning effort: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1498,9 +1528,10 @@ impl App {
                         error = %err,
                         "failed to persist model migration prompt acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save model migration prompt preference: {err}"
-                    ));
+                    self.add_config_persistence_error_message(
+                        || format!("Failed to save model migration prompt preference: {err}"),
+                        &err,
+                    );
                 }
             }
             AppEvent::OpenApprovalsPopup => {
@@ -1548,9 +1579,10 @@ impl App {
                     }
                     Err(err) => {
                         let path_display = path.display();
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to update skill config for {path_display}: {err}"
-                        ));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to update skill config for {path_display}: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1597,9 +1629,10 @@ impl App {
                         self.chat_widget.submit_op(AppCommand::reload_user_config());
                     }
                     Err(err) => {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to update app config for {id}: {err}"
-                        ));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to update app config for {id}: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1715,8 +1748,10 @@ impl App {
                     }
                     Err(err) => {
                         tracing::error!(error = %err, "failed to persist status line items; keeping previous selection");
-                        self.chat_widget
-                            .add_error_message(format!("Failed to save status line items: {err}"));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to save status line items: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1742,9 +1777,10 @@ impl App {
                     Err(err) => {
                         tracing::error!(error = %err, "failed to persist terminal title items; keeping previous selection");
                         self.chat_widget.revert_terminal_title_setup_preview();
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save terminal title items: {err}"
-                        ));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to save terminal title items: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1777,8 +1813,10 @@ impl App {
                     Err(err) => {
                         self.restore_runtime_theme_from_config();
                         tracing::error!(error = %err, "failed to persist theme selection");
-                        self.chat_widget
-                            .add_error_message(format!("Failed to save theme: {err}"));
+                        self.add_config_persistence_error_message(
+                            || format!("Failed to save theme: {err}"),
+                            &err,
+                        );
                     }
                 }
             }
@@ -1876,8 +1914,10 @@ impl App {
             }
             Err(err) => {
                 tracing::error!(error = %err, "failed to persist keymap binding");
-                self.chat_widget
-                    .add_error_message(format!("Failed to save shortcut: {err}"));
+                self.add_config_persistence_error_message(
+                    || format!("Failed to save shortcut: {err}"),
+                    &err,
+                );
             }
         }
     }
@@ -1924,8 +1964,10 @@ impl App {
             }
             Err(err) => {
                 tracing::error!(error = %err, "failed to clear keymap binding");
-                self.chat_widget
-                    .add_error_message(format!("Failed to remove shortcut: {err}"));
+                self.add_config_persistence_error_message(
+                    || format!("Failed to remove shortcut: {err}"),
+                    &err,
+                );
             }
         }
     }

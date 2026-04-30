@@ -7,6 +7,29 @@
 use super::*;
 
 impl App {
+    pub(super) fn add_config_persistence_error_message(
+        &mut self,
+        message: impl FnOnce() -> String,
+        err: &anyhow::Error,
+    ) {
+        if Self::is_readonly_nix_store_config_persistence_error(err) {
+            tracing::warn!(
+                error = %err,
+                "suppressed config persistence error for read-only Nix store config"
+            );
+            return;
+        }
+
+        self.chat_widget.add_error_message(message());
+    }
+
+    fn is_readonly_nix_store_config_persistence_error(err: &anyhow::Error) -> bool {
+        err.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains("failed to persist config.toml at /nix/store/")
+        })
+    }
+
     pub(super) async fn rebuild_config_for_cwd(&self, cwd: PathBuf) -> Result<Config> {
         let mut overrides = self.harness_overrides.clone();
         overrides.cwd = Some(cwd.clone());
@@ -272,8 +295,10 @@ impl App {
         // durable config update succeeds.
         if let Err(err) = builder.apply().await {
             tracing::error!(error = %err, "failed to persist feature flags");
-            self.chat_widget
-                .add_error_message(format!("Failed to update experimental features: {err}"));
+            self.add_config_persistence_error_message(
+                || format!("Failed to update experimental features: {err}"),
+                &err,
+            );
             return;
         }
 
@@ -414,8 +439,10 @@ impl App {
             .await
         {
             tracing::error!(error = %err, "failed to persist memory settings");
-            self.chat_widget
-                .add_error_message(format!("Failed to save memory settings: {err}"));
+            self.add_config_persistence_error_message(
+                || format!("Failed to save memory settings: {err}"),
+                &err,
+            );
             return false;
         }
 
@@ -736,5 +763,23 @@ terminal_resize_reflow_max_rows = 9000
             app.chat_widget.config_ref().tui_theme.as_deref(),
             Some("dracula")
         );
+    }
+
+    #[test]
+    fn readonly_nix_store_config_persistence_errors_are_suppressed() {
+        let err = anyhow::anyhow!(
+            "failed to persist config.toml at /nix/store/example-hm_.codexconfig.toml: Read-only file system"
+        );
+
+        assert!(App::is_readonly_nix_store_config_persistence_error(&err));
+    }
+
+    #[test]
+    fn non_nix_store_config_persistence_errors_are_not_suppressed() {
+        let err = anyhow::anyhow!(
+            "failed to persist config.toml at /home/user/.codex/config.toml: Permission denied"
+        );
+
+        assert!(!App::is_readonly_nix_store_config_persistence_error(&err));
     }
 }
