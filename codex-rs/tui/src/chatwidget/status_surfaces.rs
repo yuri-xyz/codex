@@ -59,6 +59,15 @@ impl StatusSurfaceSelections {
                 .terminal_title_items
                 .contains(&TerminalTitleItem::GitBranch)
     }
+
+    fn uses_status_line_limit_reset(&self) -> bool {
+        self.status_line_items.iter().any(|item| {
+            matches!(
+                item,
+                StatusLineItem::FiveHourLimitReset | StatusLineItem::WeeklyLimitReset
+            )
+        })
+    }
 }
 
 /// Cached project-root display name keyed by the cwd used for the last lookup.
@@ -161,6 +170,7 @@ impl ChatWidget {
             segments,
             self.config.tui_status_line_use_colors,
         ));
+        self.schedule_status_line_limit_reset_refresh(selections);
     }
 
     /// Clears the terminal title Codex most recently wrote, if any.
@@ -355,6 +365,11 @@ impl ChatWidget {
         parse_items_with_invalids(self.configured_status_line_items())
     }
 
+    pub(super) fn status_line_uses_limit_reset(&self) -> bool {
+        self.status_surface_selections()
+            .uses_status_line_limit_reset()
+    }
+
     pub(super) fn configured_status_line_items(&self) -> Vec<String> {
         self.config.tui_status_line.clone().unwrap_or_else(|| {
             DEFAULT_STATUS_LINE_ITEMS
@@ -489,6 +504,36 @@ impl ChatWidget {
         });
     }
 
+    fn schedule_status_line_limit_reset_refresh(&self, selections: &StatusSurfaceSelections) {
+        if !selections.uses_status_line_limit_reset() {
+            return;
+        }
+
+        let delay = self
+            .status_line_limit_reset_refresh_delay()
+            .unwrap_or_else(|| Duration::from_secs(5 * 60));
+        self.frame_requester.schedule_frame_in(delay);
+    }
+
+    fn status_line_limit_reset_refresh_delay(&self) -> Option<Duration> {
+        let now = Local::now();
+        self.rate_limit_snapshots_by_limit_id
+            .get("codex")
+            .into_iter()
+            .flat_map(|snapshot| [snapshot.primary.as_ref(), snapshot.secondary.as_ref()])
+            .flatten()
+            .filter_map(|window| window.resets_at_local)
+            .map(|reset_at| reset_at.signed_duration_since(now).num_seconds().max(0))
+            .min()
+            .map(|seconds| {
+                if seconds < 60 * 60 {
+                    Duration::from_secs(5 * 60)
+                } else {
+                    Duration::from_secs(60 * 60)
+                }
+            })
+    }
+
     /// Resolves a display string for one configured status-line item.
     ///
     /// Returning `None` means "omit this item for now", not "configuration error". Callers rely on
@@ -533,6 +578,17 @@ impl ChatWidget {
                     .unwrap_or_else(|| "5h".to_string());
                 self.status_line_limit_display(window, &label)
             }
+            StatusLineItem::FiveHourLimitReset => {
+                let window = self
+                    .rate_limit_snapshots_by_limit_id
+                    .get("codex")
+                    .and_then(|s| s.primary.as_ref());
+                let label = window
+                    .and_then(|window| window.window_minutes)
+                    .map(get_limits_duration)
+                    .unwrap_or_else(|| "5h".to_string());
+                self.status_line_limit_reset_display(window, &label)
+            }
             StatusLineItem::WeeklyLimit => {
                 let window = self
                     .rate_limit_snapshots_by_limit_id
@@ -543,6 +599,17 @@ impl ChatWidget {
                     .map(get_limits_duration)
                     .unwrap_or_else(|| "weekly".to_string());
                 self.status_line_limit_display(window, &label)
+            }
+            StatusLineItem::WeeklyLimitReset => {
+                let window = self
+                    .rate_limit_snapshots_by_limit_id
+                    .get("codex")
+                    .and_then(|s| s.secondary.as_ref());
+                let label = window
+                    .and_then(|window| window.window_minutes)
+                    .map(get_limits_duration)
+                    .unwrap_or_else(|| "weekly".to_string());
+                self.status_line_limit_reset_display(window, &label)
             }
             StatusLineItem::CodexVersion => Some(CODEX_CLI_VERSION.to_string()),
             StatusLineItem::ContextWindowSize => self
@@ -588,7 +655,9 @@ impl ChatWidget {
             StatusSurfacePreviewItem::ContextRemaining => StatusLineItem::ContextRemaining,
             StatusSurfacePreviewItem::ContextUsed => StatusLineItem::ContextUsed,
             StatusSurfacePreviewItem::FiveHourLimit => StatusLineItem::FiveHourLimit,
+            StatusSurfacePreviewItem::FiveHourLimitReset => StatusLineItem::FiveHourLimitReset,
             StatusSurfacePreviewItem::WeeklyLimit => StatusLineItem::WeeklyLimit,
+            StatusSurfacePreviewItem::WeeklyLimitReset => StatusLineItem::WeeklyLimitReset,
             StatusSurfacePreviewItem::CodexVersion => StatusLineItem::CodexVersion,
             StatusSurfacePreviewItem::ContextWindowSize => StatusLineItem::ContextWindowSize,
             StatusSurfacePreviewItem::UsedTokens => StatusLineItem::UsedTokens,

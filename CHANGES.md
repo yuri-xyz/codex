@@ -54,3 +54,4 @@ git log --author="yuri-xyz" --oneline
 - Suppressed the post-compaction long-thread accuracy warning so compaction completes without nudging users to start a new thread.
 - Deferred the TUI `Worked for ...` turn separator until the next visible transcript entry so idle completed turns no longer end with a divider above the composer.
 - Dimmed normal TUI composer separator lines to match the darker transcript separators.
+- Added configurable TUI status-line items for 5-hour and weekly usage-limit reset times.

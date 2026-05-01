@@ -1322,6 +1322,67 @@ async fn status_line_legacy_context_usage_renders_context_used_percent() {
 }
 
 #[tokio::test]
+async fn status_line_weekly_limit_reset_renders_reset_time() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.config.tui_status_line = Some(vec![
+        "weekly-limit".to_string(),
+        "weekly-limit-reset".to_string(),
+    ]);
+    let reset_at = chrono::Local::now() + chrono::Duration::hours(47);
+    let expected_reset_time =
+        ChatWidget::status_line_absolute_reset_label(reset_at, chrono::Local::now());
+    chat.rate_limit_snapshots_by_limit_id.insert(
+        "codex".to_string(),
+        RateLimitSnapshotDisplay {
+            limit_name: "codex".to_string(),
+            captured_at: chrono::Local::now(),
+            primary: None,
+            secondary: Some(RateLimitWindowDisplay {
+                used_percent: 77.0,
+                resets_at: Some("18:30 on 3 May".to_string()),
+                resets_at_local: Some(reset_at),
+                window_minutes: Some(10_080),
+            }),
+            credits: None,
+        },
+    );
+
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some(format!(
+            "weekly 23% · weekly resets in 1d 23h ({expected_reset_time})"
+        ))
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "weekly-limit-reset should be a valid status line item"
+    );
+}
+
+#[test]
+fn status_line_relative_reset_labels_use_compact_units() {
+    let now = chrono::Local::now();
+    assert_eq!(
+        ChatWidget::status_line_relative_reset_label(now + chrono::Duration::minutes(39), now),
+        "39min"
+    );
+    assert_eq!(
+        ChatWidget::status_line_relative_reset_label(now + chrono::Duration::hours(23), now),
+        "23h"
+    );
+    assert_eq!(
+        ChatWidget::status_line_relative_reset_label(
+            now + chrono::Duration::days(3) + chrono::Duration::hours(1),
+            now,
+        ),
+        "3d 1h"
+    );
+}
+
+#[tokio::test]
 async fn status_line_branch_state_resets_when_git_branch_disabled() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.status_line_branch = Some("main".to_string());

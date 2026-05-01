@@ -87,8 +87,14 @@ pub(crate) enum StatusLineItem {
     /// Remaining usage on the 5-hour rate limit.
     FiveHourLimit,
 
+    /// Reset time for the 5-hour rate limit.
+    FiveHourLimitReset,
+
     /// Remaining usage on the weekly rate limit.
     WeeklyLimit,
+
+    /// Reset time for the weekly rate limit.
+    WeeklyLimitReset,
 
     /// Codex application version.
     CodexVersion,
@@ -137,8 +143,14 @@ impl StatusLineItem {
             StatusLineItem::FiveHourLimit => {
                 "Remaining usage on 5-hour usage limit (omitted when unavailable)"
             }
+            StatusLineItem::FiveHourLimitReset => {
+                "Reset time for 5-hour usage limit (omitted when unavailable)"
+            }
             StatusLineItem::WeeklyLimit => {
                 "Remaining usage on weekly usage limit (omitted when unavailable)"
+            }
+            StatusLineItem::WeeklyLimitReset => {
+                "Reset time for weekly usage limit (omitted when unavailable)"
             }
             StatusLineItem::CodexVersion => "Codex application version",
             StatusLineItem::ContextWindowSize => {
@@ -169,7 +181,9 @@ impl StatusLineItem {
             StatusLineItem::ContextRemaining => StatusSurfacePreviewItem::ContextRemaining,
             StatusLineItem::ContextUsed => StatusSurfacePreviewItem::ContextUsed,
             StatusLineItem::FiveHourLimit => StatusSurfacePreviewItem::FiveHourLimit,
+            StatusLineItem::FiveHourLimitReset => StatusSurfacePreviewItem::FiveHourLimitReset,
             StatusLineItem::WeeklyLimit => StatusSurfacePreviewItem::WeeklyLimit,
+            StatusLineItem::WeeklyLimitReset => StatusSurfacePreviewItem::WeeklyLimitReset,
             StatusLineItem::CodexVersion => StatusSurfacePreviewItem::CodexVersion,
             StatusLineItem::ContextWindowSize => StatusSurfacePreviewItem::ContextWindowSize,
             StatusLineItem::UsedTokens => StatusSurfacePreviewItem::UsedTokens,
@@ -366,6 +380,19 @@ mod tests {
             "context-remaining"
         );
     }
+
+    #[test]
+    fn limit_reset_items_are_selectable_ids() {
+        assert_eq!(
+            "five-hour-limit-reset".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::FiveHourLimitReset)
+        );
+        assert_eq!(
+            "weekly-limit-reset".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::WeeklyLimitReset)
+        );
+    }
+
     #[test]
     fn project_name_is_canonical_and_accepts_legacy_ids() {
         assert_eq!(StatusLineItem::ProjectRoot.to_string(), "project-name");

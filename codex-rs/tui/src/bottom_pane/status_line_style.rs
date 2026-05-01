@@ -40,7 +40,10 @@ impl StatusLineAccent {
             | StatusLineItem::UsedTokens
             | StatusLineItem::TotalInputTokens
             | StatusLineItem::TotalOutputTokens => Self::Usage,
-            StatusLineItem::FiveHourLimit | StatusLineItem::WeeklyLimit => Self::Limit,
+            StatusLineItem::FiveHourLimit
+            | StatusLineItem::FiveHourLimitReset
+            | StatusLineItem::WeeklyLimit
+            | StatusLineItem::WeeklyLimitReset => Self::Limit,
             StatusLineItem::CodexVersion | StatusLineItem::SessionId => Self::Metadata,
             StatusLineItem::FastMode => Self::Mode,
             StatusLineItem::ThreadTitle => Self::Thread,

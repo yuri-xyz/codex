@@ -4179,6 +4179,9 @@ impl ChatWidget {
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
+        if self.status_line_uses_limit_reset() {
+            self.refresh_status_line();
+        }
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
@@ -7080,6 +7083,58 @@ impl ChatWidget {
         let window = window?;
         let remaining = (100.0f64 - window.used_percent).clamp(0.0f64, 100.0f64);
         Some(format!("{label} {remaining:.0}%"))
+    }
+
+    fn status_line_limit_reset_display(
+        &self,
+        window: Option<&RateLimitWindowDisplay>,
+        label: &str,
+    ) -> Option<String> {
+        let window = window?;
+        if let Some(reset_at) = window.resets_at_local {
+            let reset = Self::status_line_relative_reset_label(reset_at, Local::now());
+            let reset_time = Self::status_line_absolute_reset_label(reset_at, Local::now());
+            return Some(format!("{label} resets in {reset} ({reset_time})"));
+        }
+
+        let reset = window.resets_at.as_ref()?;
+        Some(format!("{label} resets {reset}"))
+    }
+
+    fn status_line_relative_reset_label(
+        reset_at: chrono::DateTime<Local>,
+        now: chrono::DateTime<Local>,
+    ) -> String {
+        let seconds = reset_at.signed_duration_since(now).num_seconds().max(0);
+        if seconds < 60 * 60 {
+            let minutes = ((seconds + 59) / 60).max(1);
+            return format!("{minutes}min");
+        }
+
+        let hours = ((seconds + 3_599) / 3_600).max(1);
+        if hours < 24 {
+            return format!("{hours}h");
+        }
+
+        let days = hours / 24;
+        let remaining_hours = hours % 24;
+        if remaining_hours == 0 {
+            format!("{days}d")
+        } else {
+            format!("{days}d {remaining_hours}h")
+        }
+    }
+
+    fn status_line_absolute_reset_label(
+        reset_at: chrono::DateTime<Local>,
+        now: chrono::DateTime<Local>,
+    ) -> String {
+        let time = reset_at.format("%-I:%M %p").to_string();
+        if reset_at.date_naive() == now.date_naive() {
+            time
+        } else {
+            format!("{time} on {}", reset_at.format("%-d %b"))
+        }
     }
 
     fn status_line_reasoning_effort_label(effort: Option<ReasoningEffortConfig>) -> &'static str {
