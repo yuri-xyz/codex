@@ -2151,57 +2151,14 @@ async fn manual_compact_retries_after_context_window_error() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.unwrap();
-    let EventMsg::BackgroundEvent(event) =
-        wait_for_event(&codex, |ev| matches!(ev, EventMsg::BackgroundEvent(_))).await
-    else {
-        panic!("expected background event after compact retry");
-    };
-    assert!(
-        event.message.contains("Trimmed 1 older thread item"),
-        "background event should mention trimmed item count: {}",
-        event.message
-    );
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
     assert_eq!(
         requests.len(),
-        3,
-        "expected user turn and two compact attempts"
+        1,
+        "deterministic compact should complete locally without remote compact attempts"
     );
-
-    let compact_attempt = requests[1].body_json();
-    let retry_attempt = requests[2].body_json();
-
-    let compact_input = compact_attempt["input"]
-        .as_array()
-        .unwrap_or_else(|| panic!("compact attempt missing input array: {compact_attempt}"));
-    let retry_input = retry_attempt["input"]
-        .as_array()
-        .unwrap_or_else(|| panic!("retry attempt missing input array: {retry_attempt}"));
-    let compact_contains_prompt =
-        body_contains_text(&compact_attempt.to_string(), SUMMARIZATION_PROMPT);
-    let retry_contains_prompt =
-        body_contains_text(&retry_attempt.to_string(), SUMMARIZATION_PROMPT);
-    assert_eq!(
-        compact_contains_prompt, retry_contains_prompt,
-        "compact attempts should consistently include or omit the summarization prompt"
-    );
-    assert_eq!(
-        retry_input.len(),
-        compact_input.len().saturating_sub(1),
-        "retry should drop exactly one history item (before {} vs after {})",
-        compact_input.len(),
-        retry_input.len()
-    );
-    if let (Some(first_before), Some(first_after)) = (compact_input.first(), retry_input.first()) {
-        assert_ne!(
-            first_before, first_after,
-            "retry should drop the oldest conversation item"
-        );
-    } else {
-        panic!("expected non-empty compact inputs");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

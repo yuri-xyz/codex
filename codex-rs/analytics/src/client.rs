@@ -11,11 +11,13 @@ use crate::facts::TrackEventsContext;
 use crate::facts::TurnResolvedConfigFact;
 use crate::facts::TurnTokenUsageFact;
 use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponse;
+use codex_app_server_protocol::ClientResponsePayload;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::ServerResponse;
 use codex_login::AuthManager;
 use codex_plugin::PluginTelemetryMetadata;
 #[cfg(test)]
@@ -27,11 +29,15 @@ use std::sync::Mutex;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Default)]
-pub struct AnalyticsEventsClient;
+pub struct AnalyticsEventsClient {
+    #[cfg(test)]
+    pub(crate) queue: Option<AnalyticsEventsQueue>,
+}
 
 #[cfg(test)]
+#[derive(Clone)]
 pub(crate) struct AnalyticsEventsQueue {
-    pub(crate) sender: mpsc::Sender<crate::events::TrackEventRequest>,
+    pub(crate) sender: mpsc::Sender<AnalyticsFact>,
     pub(crate) app_used_emitted_keys: Arc<Mutex<HashSet<String>>>,
     pub(crate) plugin_used_emitted_keys: Arc<Mutex<HashSet<String>>>,
 }
@@ -82,7 +88,14 @@ impl AnalyticsEventsClient {
         _base_url: String,
         _analytics_enabled: Option<bool>,
     ) -> Self {
-        Self
+        Self::disabled()
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            #[cfg(test)]
+            queue: None,
+        }
     }
 
     pub fn track_skill_invocations(
@@ -119,10 +132,21 @@ impl AnalyticsEventsClient {
 
     pub fn track_request(
         &self,
-        _connection_id: u64,
-        _request_id: RequestId,
-        _request: ClientRequest,
+        connection_id: u64,
+        request_id: RequestId,
+        request: &ClientRequest,
     ) {
+        if !matches!(
+            request,
+            ClientRequest::TurnStart { .. } | ClientRequest::TurnSteer { .. }
+        ) {
+            return;
+        }
+        self.record_fact(AnalyticsFact::ClientRequest {
+            connection_id,
+            request_id,
+            request: Box::new(request.clone()),
+        });
     }
 
     pub fn track_app_used(&self, _tracking: TrackEventsContext, _app: AppInvocation) {}
@@ -150,9 +174,38 @@ impl AnalyticsEventsClient {
 
     pub fn track_plugin_disabled(&self, _plugin: PluginTelemetryMetadata) {}
 
+    #[cfg(not(test))]
     pub(crate) fn record_fact(&self, _input: AnalyticsFact) {}
 
-    pub fn track_response(&self, _connection_id: u64, _response: ClientResponse) {}
+    #[cfg(test)]
+    pub(crate) fn record_fact(&self, input: AnalyticsFact) {
+        if let Some(queue) = self.queue.as_ref() {
+            let _ = queue.sender.try_send(input);
+        }
+    }
+
+    pub fn track_response(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        response: ClientResponsePayload,
+    ) {
+        if !matches!(
+            response,
+            ClientResponsePayload::ThreadStart(_)
+                | ClientResponsePayload::ThreadResume(_)
+                | ClientResponsePayload::ThreadFork(_)
+                | ClientResponsePayload::TurnStart(_)
+                | ClientResponsePayload::TurnSteer(_)
+        ) {
+            return;
+        }
+        self.record_fact(AnalyticsFact::ClientResponse {
+            connection_id,
+            request_id,
+            response: Box::new(response),
+        });
+    }
 
     pub fn track_error_response(
         &self,
@@ -164,4 +217,12 @@ impl AnalyticsEventsClient {
     }
 
     pub fn track_notification(&self, _notification: ServerNotification) {}
+
+    pub fn track_server_request(&self, _connection_id: u64, _request: ServerRequest) {}
+
+    pub fn track_server_response(&self, _response: ServerResponse) {}
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

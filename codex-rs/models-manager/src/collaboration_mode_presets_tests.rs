@@ -9,14 +9,14 @@ fn preset_names_use_mode_display_names() {
         unrestricted_preset().name,
         ModeKind::Unrestricted.display_name()
     );
-    assert_eq!(
-        default_preset(CollaborationModesConfig::default()).name,
-        ModeKind::Default.display_name()
-    );
+    assert_eq!(default_preset().name, ModeKind::Default.display_name());
+    assert_eq!(plan_preset().model, None);
     assert_eq!(
         plan_preset().reasoning_effort,
         Some(Some(ReasoningEffort::Medium))
     );
+    assert_eq!(default_preset().model, None);
+    assert_eq!(default_preset().reasoning_effort, None);
 }
 
 #[test]
@@ -43,16 +43,12 @@ fn unrestricted_preset_includes_unrestricted_mode_instructions() {
 
 #[test]
 fn default_mode_instructions_replace_mode_names_placeholder() {
-    let default_instructions = default_preset(CollaborationModesConfig {
-        default_mode_request_user_input: true,
-    })
-    .developer_instructions
-    .expect("default preset should include instructions")
-    .expect("default instructions should be set");
+    let default_instructions = default_preset()
+        .developer_instructions
+        .expect("default preset should include instructions")
+        .expect("default instructions should be set");
 
     assert!(!default_instructions.contains("{{KNOWN_MODE_NAMES}}"));
-    assert!(!default_instructions.contains("{{REQUEST_USER_INPUT_AVAILABILITY}}"));
-    assert!(!default_instructions.contains("{{ASKING_QUESTIONS_GUIDANCE}}"));
 
     let known_mode_names = format_mode_names(&TUI_VISIBLE_COLLABORATION_MODES);
     let expected_snippet = format!("Known mode names are {known_mode_names}.");
@@ -68,7 +64,7 @@ fn default_mode_instructions_replace_mode_names_placeholder() {
 
 #[test]
 fn default_mode_instructions_prefer_request_user_input_by_default() {
-    let default_instructions = default_preset(CollaborationModesConfig::default())
+    let default_instructions = default_preset()
         .developer_instructions
         .expect("default preset should include instructions")
         .expect("default instructions should be set");
@@ -78,7 +74,7 @@ fn default_mode_instructions_prefer_request_user_input_by_default() {
 
 #[test]
 fn default_mode_instructions_use_plain_text_questions_when_feature_disabled() {
-    let default_instructions = default_preset(CollaborationModesConfig {
+    let default_instructions = default_preset_with_config(CollaborationModesConfig {
         default_mode_request_user_input: false,
     })
     .developer_instructions

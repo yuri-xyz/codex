@@ -1871,6 +1871,60 @@ async fn spawn_agent_allows_depth_up_to_configured_max_depth() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_spawn_agent_ignores_configured_max_depth() {
+    #[derive(Debug, Deserialize)]
+    struct SpawnAgentResult {
+        task_name: String,
+        nickname: Option<String>,
+    }
+
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let mut config = (*turn.config).clone();
+    config.agent_max_depth = 1;
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    let root = manager
+        .start_thread(config.clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    turn.config = Arc::new(config);
+    let parent_path = AgentPath::try_from("/root/parent").expect("agent path");
+    turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root.thread_id,
+        depth: 1,
+        agent_path: Some(parent_path),
+        agent_nickname: None,
+        agent_role: None,
+    });
+
+    let invocation = invocation(
+        Arc::new(session),
+        Arc::new(turn),
+        "spawn_agent",
+        function_payload(json!({
+            "message": "hello",
+            "task_name": "child",
+            "fork_turns": "none"
+        })),
+    );
+    let output = SpawnAgentHandlerV2
+        .handle(invocation)
+        .await
+        .expect("multi-agent v2 spawn should ignore max depth");
+    let (content, success) = expect_text_output(output);
+    let result: SpawnAgentResult =
+        serde_json::from_str(&content).expect("spawn_agent result should be json");
+    assert_eq!(result.task_name, "/root/parent/child");
+    assert!(result.nickname.is_some());
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
 async fn send_input_rejects_empty_message() {
     let (session, turn) = make_session_and_context().await;
     let invocation = invocation(
@@ -1957,7 +2011,10 @@ async fn send_input_interrupts_before_prompt() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let invocation = invocation(
         Arc::new(session),
@@ -1996,7 +2053,10 @@ async fn send_input_accepts_structured_items() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let invocation = invocation(
         Arc::new(session),
@@ -2088,7 +2148,10 @@ async fn resume_agent_noops_for_active_agent() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let status_before = manager.agent_control().get_status(agent_id).await;
     let invocation = invocation(
@@ -2126,7 +2189,7 @@ async fn resume_agent_restores_closed_agent_and_accepts_send_input() {
     let config = turn.config.as_ref().clone();
     let thread = manager
         .resume_thread_with_history(
-            config,
+            config.clone(),
             InitialHistory::Forked(vec![RolloutItem::ResponseItem(ResponseItem::Message {
                 id: None,
                 role: "user".to_string(),
@@ -2467,7 +2530,10 @@ async fn wait_agent_times_out_when_status_is_not_final() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let invocation = invocation(
         Arc::new(session),
@@ -2507,7 +2573,10 @@ async fn wait_agent_clamps_short_timeouts_to_minimum() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let invocation = invocation(
         Arc::new(session),
@@ -2542,7 +2611,10 @@ async fn wait_agent_returns_final_status_without_timeout() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let mut status_rx = manager
         .agent_control()
@@ -3041,7 +3113,10 @@ async fn close_agent_submits_shutdown_and_returns_previous_status() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let config = turn.config.as_ref().clone();
-    let thread = manager.start_thread(config).await.expect("start thread");
+    let thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start thread");
     let agent_id = thread.thread_id;
     let status_before = manager.agent_control().get_status(agent_id).await;
 
@@ -3214,7 +3289,7 @@ async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtr
     );
 
     let operator = manager
-        .start_thread(config)
+        .start_thread(config.clone())
         .await
         .expect("operator thread should start");
     let operator_session = operator.thread.codex.session.clone();
