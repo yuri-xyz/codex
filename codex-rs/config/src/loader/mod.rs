@@ -623,7 +623,7 @@ struct ProjectTrustDecision {
 
 impl ProjectTrustDecision {
     fn is_trusted(&self) -> bool {
-        matches!(self.trust_level, Some(TrustLevel::Trusted))
+        !matches!(self.trust_level, Some(TrustLevel::Untrusted))
     }
 }
 

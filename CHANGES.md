@@ -48,6 +48,9 @@ git log --author="yuri-xyz" --oneline
 - Restyled the TUI composer input to use a Claude Code-inspired top/bottom border and triangle prompt marker while leaving sent-message history styling unchanged.
 - Hardened live thread resume so unmaterialized or ephemeral running threads fail early instead of falling into a stack-heavy stored-history resume path.
 - Removed the startup repository trust prompt by silently trusting new local projects and continuing directly into the next startup phase.
+- Defaulted unknown local projects to trusted in the config loader so project-local config, hooks, and exec policies load without writing to a read-only user config file.
 - Removed the `/feedback` TUI slash command from command parsing and the slash-command picker.
 - Removed the `/plan` TUI slash command while keeping Plan mode available through collaboration-mode controls.
 - Suppressed the post-compaction long-thread accuracy warning so compaction completes without nudging users to start a new thread.
+- Deferred the TUI `Worked for ...` turn separator until the next visible transcript entry so idle completed turns no longer end with a divider above the composer.
+- Dimmed normal TUI composer separator lines to match the darker transcript separators.

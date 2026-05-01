@@ -1587,11 +1587,12 @@ async fn codex_home_within_project_tree_is_not_double_loaded() -> std::io::Resul
 }
 
 #[tokio::test]
-async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<()> {
+async fn project_layers_disabled_when_untrusted_but_enabled_when_unknown() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let project_root = tmp.path().join("project");
     let nested = project_root.join("child");
     tokio::fs::create_dir_all(nested.join(".codex")).await?;
+    tokio::fs::write(project_root.join(".git"), "gitdir: here").await?;
     tokio::fs::write(
         nested.join(".codex").join(CONFIG_TOML_FILE),
         "foo = \"child\"\n",
@@ -1677,8 +1678,8 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
         .collect();
     assert_eq!(project_layers_unknown.len(), 1);
     assert!(
-        project_layers_unknown[0].disabled_reason.is_some(),
-        "expected unknown-trust project layer to be disabled"
+        project_layers_unknown[0].disabled_reason.is_none(),
+        "expected unknown-trust project layer to be trusted by default"
     );
     assert_eq!(
         project_layers_unknown[0].config.get("foo"),
@@ -1686,7 +1687,7 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
     );
     assert_eq!(
         layers_unknown.effective_config().get("foo"),
-        Some(&TomlValue::String("user".to_string()))
+        Some(&TomlValue::String("child".to_string()))
     );
 
     Ok(())
@@ -1694,7 +1695,7 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
 
 #[cfg(unix)]
 #[tokio::test]
-async fn project_trust_does_not_match_configured_alias_for_canonical_cwd() -> std::io::Result<()> {
+async fn unknown_project_trust_loads_config_even_with_configured_alias() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let project_root = tmp.path().join("project");
     let alias_root = tmp.path().join("project_alias");
@@ -1745,10 +1746,13 @@ async fn project_trust_does_not_match_configured_alias_for_canonical_cwd() -> st
         .collect();
     assert_eq!(project_layers.len(), 1);
     assert!(
-        project_layers[0].disabled_reason.is_some(),
-        "configured aliases must not collapse into the canonical project key"
+        project_layers[0].disabled_reason.is_none(),
+        "unknown projects should be trusted by default"
     );
-    assert_eq!(layers.effective_config().get("foo"), None);
+    assert_eq!(
+        layers.effective_config().get("foo"),
+        Some(&TomlValue::String("project".to_string()))
+    );
 
     Ok(())
 }
@@ -1823,6 +1827,13 @@ enabled = false
 "#,
     )
     .await?;
+    make_config_for_test(
+        &codex_home,
+        &project_root,
+        TrustLevel::Untrusted,
+        /*project_root_markers*/ None,
+    )
+    .await?;
 
     let err = ConfigBuilder::default()
         .codex_home(codex_home)
@@ -1845,7 +1856,7 @@ enabled = false
 }
 
 #[tokio::test]
-async fn invalid_project_config_ignored_when_untrusted_or_unknown() -> std::io::Result<()> {
+async fn invalid_project_config_ignored_when_untrusted() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let project_root = tmp.path().join("project");
     let nested = project_root.join("child");
@@ -1854,10 +1865,7 @@ async fn invalid_project_config_ignored_when_untrusted_or_unknown() -> std::io::
     tokio::fs::write(nested.join(".codex").join(CONFIG_TOML_FILE), "foo =").await?;
 
     let cwd = AbsolutePathBuf::from_absolute_path(&nested)?;
-    let cases = [
-        ("untrusted", Some(TrustLevel::Untrusted)),
-        ("unknown", None),
-    ];
+    let cases = [("untrusted", Some(TrustLevel::Untrusted))];
 
     for (name, trust_level) in cases {
         let codex_home = tmp.path().join(format!("home_{name}"));
@@ -1930,7 +1938,7 @@ async fn project_layer_without_config_toml_is_disabled_when_untrusted_or_unknown
     let cwd = AbsolutePathBuf::from_absolute_path(&nested)?;
     let cases = [
         ("untrusted", Some(TrustLevel::Untrusted), true),
-        ("unknown", None, true),
+        ("unknown", None, false),
         ("trusted", Some(TrustLevel::Trusted), false),
     ];
 

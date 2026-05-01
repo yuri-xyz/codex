@@ -1983,7 +1983,9 @@ impl Config {
                 resolved_cwd.as_path(),
                 repo_root.as_ref().map(AbsolutePathBuf::as_path),
             )
-            .unwrap_or(ProjectConfig { trust_level: None });
+            .unwrap_or(ProjectConfig {
+                trust_level: Some(TrustLevel::Trusted),
+            });
         let permission_config_syntax = resolve_permission_config_syntax(
             &config_layer_stack,
             &cfg,

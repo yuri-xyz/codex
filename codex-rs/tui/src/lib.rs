@@ -2221,7 +2221,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_project_is_auto_trusted_without_prompt() -> std::io::Result<()> {
+    async fn unknown_project_defaults_to_trusted_without_prompt() -> std::io::Result<()> {
         use codex_protocol::config_types::TrustLevel;
 
         let temp_dir = TempDir::new()?;
@@ -2238,9 +2238,8 @@ mod tests {
             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
             .build()
             .await?;
-        assert_eq!(config.active_project.trust_level, None);
-
-        assert!(auto_trust_current_project_if_needed(&config).await);
+        assert_eq!(config.active_project.trust_level, Some(TrustLevel::Trusted));
+        assert!(!auto_trust_current_project_if_needed(&config).await);
 
         let reloaded_config = ConfigBuilder::default()
             .codex_home(codex_home)

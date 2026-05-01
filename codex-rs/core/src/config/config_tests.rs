@@ -1435,8 +1435,7 @@ async fn implicit_builtin_workspace_profile_preserves_add_dir_metadata_carveouts
 }
 
 #[tokio::test]
-async fn empty_config_defaults_to_builtin_read_only_without_trust_decision() -> std::io::Result<()>
-{
+async fn empty_config_defaults_to_builtin_workspace_for_unknown_project() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
 
@@ -1456,8 +1455,8 @@ async fn empty_config_defaults_to_builtin_read_only_without_trust_decision() -> 
         "expected :read-only to allow reads, policy: {policy:?}"
     );
     assert!(
-        !policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
-        "expected :read-only to deny writes, policy: {policy:?}"
+        policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
+        "expected unknown projects to default to :workspace, policy: {policy:?}"
     );
     Ok(())
 }

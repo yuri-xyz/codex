@@ -754,6 +754,22 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
         }),
     });
 
+    let turn_complete_cells = drain_insert_history(&mut rx);
+    let turn_complete_combined = turn_complete_cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert!(
+        !turn_complete_combined.contains("Worked for"),
+        "expected completed turn not to end with a final separator, got:\n{turn_complete_combined}"
+    );
+
+    chat.add_to_history(history_cell::new_user_prompt(
+        "Next request.".to_string(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
     let cells = drain_insert_history(&mut rx);
     let combined = cells
         .iter()

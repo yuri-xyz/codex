@@ -2014,10 +2014,25 @@ async fn runtime_metrics_websocket_timing_logs_and_final_separator_sums_totals()
     chat.on_task_complete(
         /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
+    assert!(
+        rx.try_recv().is_err(),
+        "expected runtime metrics separator to be deferred until the next history cell"
+    );
+
+    chat.add_to_history(history_cell::new_info_event(
+        "next turn".to_string(),
+        /*hint*/ None,
+    ));
     let mut final_separator = None;
     while let Ok(event) = rx.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
             final_separator = Some(lines_to_single_string(&cell.display_lines(/*width*/ 300)));
+            if final_separator
+                .as_ref()
+                .is_some_and(|line| line.contains("TTFT:"))
+            {
+                break;
+            }
         }
     }
     let final_separator = final_separator.expect("expected final separator with runtime metrics");

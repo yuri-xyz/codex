@@ -787,6 +787,12 @@ impl PendingGuardianReviewStatus {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PendingFinalMessageSeparator {
+    elapsed_seconds: Option<u64>,
+    runtime_metrics: Option<RuntimeMetricsSummary>,
+}
+
 /// Maintains the per-session UI state and interaction state machines for the chat screen.
 ///
 /// `ChatWidget` owns the state derived from the protocol event stream (history cells, streaming
@@ -1012,6 +1018,9 @@ pub(crate) struct ChatWidget {
     // This is set whenever we insert a visible history cell that conceptually belongs to a turn.
     // The separator itself is only rendered if the turn recorded "work" activity.
     needs_final_message_separator: bool,
+    // Separator data for a completed turn. We defer rendering until the next visible history cell
+    // so the transcript never ends with a divider directly above the composer.
+    pending_final_message_separator: Option<PendingFinalMessageSeparator>,
     // Whether the current turn performed "work" (exec commands, MCP tool calls, patch applications).
     //
     // This gates rendering of the "Worked for …" separator so purely conversational turns don't
@@ -2843,10 +2852,10 @@ impl ChatWidget {
                 } else {
                     None
                 };
-                self.add_to_history(history_cell::FinalMessageSeparator::new(
+                self.pending_final_message_separator = Some(PendingFinalMessageSeparator {
                     elapsed_seconds,
                     runtime_metrics,
-                ));
+                });
             }
             self.turn_runtime_metrics = RuntimeMetricsSummary::default();
             self.needs_final_message_separator = false;
@@ -5101,6 +5110,7 @@ impl ChatWidget {
         self.flush_active_cell();
 
         if self.stream_controller.is_none() {
+            self.emit_pending_final_message_separator();
             // If the previous turn inserted non-stream history (exec output, patch status, MCP
             // calls), render a separator before starting the next streamed assistant message.
             if self.needs_final_message_separator && self.had_work_activity {
@@ -5680,6 +5690,7 @@ impl ChatWidget {
             is_review_mode: false,
             pre_review_token_info: None,
             needs_final_message_separator: false,
+            pending_final_message_separator: None,
             had_work_activity: false,
             saw_plan_update_this_turn: false,
             saw_plan_item_this_turn: false,
@@ -6173,12 +6184,25 @@ impl ChatWidget {
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.active_cell.take() {
             self.needs_final_message_separator = true;
+            self.emit_pending_final_message_separator();
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
         }
     }
 
     pub(crate) fn add_to_history(&mut self, cell: impl HistoryCell + 'static) {
         self.add_boxed_history(Box::new(cell));
+    }
+
+    fn emit_pending_final_message_separator(&mut self) {
+        if let Some(PendingFinalMessageSeparator {
+            elapsed_seconds,
+            runtime_metrics,
+        }) = self.pending_final_message_separator.take()
+        {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::FinalMessageSeparator::new(elapsed_seconds, runtime_metrics),
+            )));
+        }
     }
 
     fn add_boxed_history(&mut self, cell: Box<dyn HistoryCell>) {
@@ -6193,6 +6217,7 @@ impl ChatWidget {
         if !keep_placeholder_header_active && !cell.display_lines(u16::MAX).is_empty() {
             // Only break exec grouping if the cell renders visible lines.
             self.flush_active_cell();
+            self.emit_pending_final_message_separator();
             self.needs_final_message_separator = true;
         }
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));

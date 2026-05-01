@@ -4331,7 +4331,7 @@ impl ChatComposer {
             .style(style)
             .borders(Borders::TOP | Borders::BOTTOM)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ratatui::style::Color::DarkGray))
+            .border_style(Style::default().dim())
             .render_ref(composer_rect, buf);
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.remote_images_lines(remote_images_rect.width))
@@ -4522,6 +4522,12 @@ mod tests {
             spacing_row.chars().all(|ch| ch == '─' || ch == ' '),
             "expected composer border or blank spacing row above hints but saw: {spacing_row:?}",
         );
+        let border_x = (0..area.width)
+            .find(|x| buf[(*x, hint_row_idx - 1)].symbol() == "─")
+            .expect("expected a composer border cell");
+        let border_style = buf[(border_x, hint_row_idx - 1)].style();
+        assert!(border_style.add_modifier.contains(Modifier::DIM));
+        assert_ne!(border_style.fg, Some(Color::DarkGray));
     }
 
     #[test]
