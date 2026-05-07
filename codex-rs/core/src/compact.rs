@@ -2,6 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::hook_runtime::PostCompactHookOutcome;
+use crate::hook_runtime::PreCompactHookOutcome;
+use crate::hook_runtime::run_post_compact_hooks;
+use crate::hook_runtime::run_pre_compact_hooks;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -101,7 +105,8 @@ pub(crate) async fn run_compact_task(
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 async fn run_compact_task_inner(
@@ -121,20 +126,34 @@ async fn run_compact_task_inner(
         phase,
     )
     .await;
+    let pre_compact_outcome = run_pre_compact_hooks(&sess, &turn_context, trigger).await;
+    match pre_compact_outcome {
+        PreCompactHookOutcome::Continue => {}
+        PreCompactHookOutcome::Stopped { reason } => {
+            let error = reason.unwrap_or_else(|| "PreCompact hook stopped execution".to_string());
+            attempt
+                .track(sess.as_ref(), CompactionStatus::Interrupted, Some(error))
+                .await;
+            return Err(CodexErr::TurnAborted);
+        }
+    }
     let result = run_compact_task_inner_impl(
         Arc::clone(&sess),
         Arc::clone(&turn_context),
         initial_context_injection,
     )
     .await;
-    attempt
-        .track(
-            sess.as_ref(),
-            compaction_status_from_result(&result),
-            result.as_ref().err().map(ToString::to_string),
-        )
-        .await;
-    result
+    let status = compaction_status_from_result(&result);
+    let error = result.as_ref().err().map(ToString::to_string);
+    if result.is_ok() {
+        let post_compact_outcome = run_post_compact_hooks(&sess, &turn_context, trigger).await;
+        if let PostCompactHookOutcome::Stopped = post_compact_outcome {
+            attempt.track(sess.as_ref(), status, error).await;
+            return Err(CodexErr::TurnAborted);
+        }
+    }
+    attempt.track(sess.as_ref(), status, error).await;
+    result.map(|_| ())
 }
 
 async fn run_compact_task_inner_impl(
@@ -370,9 +389,10 @@ fn render_compaction_event(
             }
             Some(sections.join("\n"))
         }
-        ResponseItem::Compaction { .. } | ResponseItem::Other | ResponseItem::Message { .. } => {
-            None
-        }
+        ResponseItem::Compaction { .. }
+        | ResponseItem::ContextCompaction { .. }
+        | ResponseItem::Other
+        | ResponseItem::Message { .. } => None,
     }?;
 
     Some(truncate_rendered_event_lines(
@@ -602,7 +622,13 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
+        .find_map(|(i, item)| {
+            matches!(
+                item,
+                ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+            )
+            .then_some(i)
+        });
     let insertion_index = last_real_user_index
         .or(last_user_or_summary_index)
         .or(last_compaction_index);

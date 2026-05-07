@@ -1700,8 +1700,8 @@ dependencies = [
  "chrono",
  "clap",
  "codex-analytics",
- "codex-api",
  "codex-app-server-protocol",
+ "codex-app-server-transport",
  "codex-arg0",
  "codex-backend-client",
  "codex-chatgpt",
@@ -1734,23 +1734,17 @@ dependencies = [
  "codex-state",
  "codex-thread-store",
  "codex-tools",
- "codex-uds",
  "codex-utils-absolute-path",
  "codex-utils-cargo-bin",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
  "codex-utils-pty",
- "codex-utils-rustls-provider",
- "constant_time_eq 0.3.1",
  "core_test_support",
  "flate2",
  "futures",
- "gethostname",
  "hmac",
- "jsonwebtoken",
  "opentelemetry",
  "opentelemetry_sdk",
- "owo-colors",
  "pretty_assertions",
  "reqwest",
  "rmcp",
@@ -1793,6 +1787,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "toml 0.9.11+spec-1.1.0",
@@ -1844,6 +1839,45 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tungstenite",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "codex-app-server-transport"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "codex-api",
+ "codex-app-server-protocol",
+ "codex-config",
+ "codex-core",
+ "codex-login",
+ "codex-model-provider",
+ "codex-state",
+ "codex-uds",
+ "codex-utils-absolute-path",
+ "codex-utils-rustls-provider",
+ "constant_time_eq 0.3.1",
+ "futures",
+ "gethostname",
+ "hmac",
+ "jsonwebtoken",
+ "owo-colors",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -1933,6 +1967,26 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+]
+
+[[package]]
+name = "codex-builtin-mcps"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-memories-mcp",
+ "codex-utils-absolute-path",
+ "pretty_assertions",
+ "tokio",
+]
+
+[[package]]
+name = "codex-bwrap"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -2030,6 +2084,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pretty_assertions",
  "rand 0.9.3",
+ "rcgen",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -2356,6 +2411,7 @@ dependencies = [
  "codex-core-skills",
  "codex-exec-server",
  "codex-git-utils",
+ "codex-hooks",
  "codex-login",
  "codex-model-provider",
  "codex-otel",
@@ -2509,6 +2565,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "sha2",
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
@@ -2517,6 +2574,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -2676,6 +2734,7 @@ dependencies = [
  "codex-plugin",
  "codex-protocol",
  "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
  "futures",
  "pretty_assertions",
  "regex",
@@ -2684,6 +2743,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2707,7 +2768,6 @@ dependencies = [
 name = "codex-linux-sandbox"
 version = "0.0.0"
 dependencies = [
- "cc",
  "clap",
  "codex-core",
  "codex-process-hardening",
@@ -2717,11 +2777,11 @@ dependencies = [
  "globset",
  "landlock",
  "libc",
- "pkg-config",
  "pretty_assertions",
  "seccompiler",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "url",
@@ -2791,6 +2851,7 @@ dependencies = [
  "async-channel",
  "codex-api",
  "codex-async-utils",
+ "codex-builtin-mcps",
  "codex-config",
  "codex-exec-server",
  "codex-login",
@@ -2847,6 +2908,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-memories-mcp"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "pretty_assertions",
+ "rmcp",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "codex-memories-read"
 version = "0.0.0"
 dependencies = [
@@ -2893,6 +2971,19 @@ dependencies = [
  "tracing",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "codex-message-history"
+version = "0.0.0"
+dependencies = [
+ "codex-config",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3437,6 +3528,7 @@ dependencies = [
  "codex-install-context",
  "codex-login",
  "codex-mcp",
+ "codex-message-history",
  "codex-model-provider",
  "codex-model-provider-info",
  "codex-models-manager",
@@ -4007,6 +4099,7 @@ dependencies = [
  "codex-core",
  "codex-exec-server",
  "codex-features",
+ "codex-hooks",
  "codex-login",
  "codex-model-provider-info",
  "codex-models-manager",
@@ -4023,6 +4116,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "shlex",
+ "similar",
  "tempfile",
  "tokio",
  "tokio-tungstenite",

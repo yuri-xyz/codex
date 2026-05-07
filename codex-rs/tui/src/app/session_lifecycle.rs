@@ -618,7 +618,10 @@ impl App {
 
     pub(super) fn fresh_session_config(&self) -> Config {
         let mut config = self.config.clone();
-        config.service_tier = self.chat_widget.configured_service_tier();
+        config.service_tier = self
+            .chat_widget
+            .configured_service_tier()
+            .map(|service_tier| service_tier.request_value().to_string());
         config.notices.fast_default_opt_out = self.chat_widget.fast_default_opt_out();
         config
     }
@@ -639,7 +642,7 @@ impl App {
         } else {
             match crate::session_resume::resolve_cwd_for_resume_or_fork(
                 tui,
-                &self.config,
+                self.state_db.as_deref(),
                 &current_cwd,
                 target_session.thread_id,
                 target_session.path.as_deref(),
@@ -681,6 +684,7 @@ impl App {
             .await
         {
             Ok(resumed) => {
+                let resumed_thread_id = resumed.session.thread_id;
                 self.shutdown_current_thread(app_server).await;
                 self.config = resume_config;
                 tui.set_notification_settings(
@@ -708,6 +712,11 @@ impl App {
                             }
                             self.chat_widget.add_plain_history_lines(lines);
                         }
+                        self.maybe_prompt_resume_paused_goal_after_resume(
+                            app_server,
+                            resumed_thread_id,
+                        )
+                        .await;
                     }
                     Err(err) => {
                         self.chat_widget.add_error_message(format!(
