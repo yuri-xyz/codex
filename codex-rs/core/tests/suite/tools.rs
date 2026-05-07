@@ -357,7 +357,7 @@ async fn shell_escalated_permissions_rejected_then_ok() -> Result<()> {
     let mut builder = test_codex().with_model("test-shell-json");
     let test = builder.build(&server).await?;
 
-    let command = ["/bin/echo", "shell ok"];
+    let command = ["echo", "shell ok"];
     let call_id_blocked = "shell-blocked";
     let call_id_success = "shell-success";
 
@@ -458,7 +458,7 @@ async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
     let target_path = fixture.workspace_path("sandbox-denied.txt");
     let sentinel = "sandbox-denied sentinel output";
     let command = vec![
-        "/bin/sh".to_string(),
+        "sh".to_string(),
         "-c".to_string(),
         format!(
             "printf {sentinel:?}; printf {content:?} > {path:?}",
@@ -578,7 +578,7 @@ async fn shell_enforces_glob_deny_read_policy() -> Result<()> {
 
     let call_id = "shell-glob-deny-read";
     let command = vec![
-        "/bin/sh".to_string(),
+        "sh".to_string(),
         "-c".to_string(),
         "status=0; cat \"$1\" || status=$?; cat \"$2\"; exit \"$status\"".to_string(),
         "sh".to_string(),
@@ -720,7 +720,7 @@ async fn shell_timeout_includes_timeout_prefix_and_metadata() -> Result<()> {
     let call_id = "shell-timeout";
     let timeout_ms = 50u64;
     let args = json!({
-        "command": ["/bin/sh", "-c", "yes line | head -n 400; sleep 1"],
+        "command": ["sh", "-c", "yes line | head -n 400; sleep 1"],
         "timeout_ms": timeout_ms,
     });
 
@@ -802,7 +802,7 @@ import time
 from pathlib import Path
 
 # Spawn a detached grandchild that inherits stdout/stderr so the pipe stays open.
-proc = subprocess.Popen(["/bin/sh", "-c", "sleep 60"], start_new_session=True)
+proc = subprocess.Popen(["sh", "-c", "sleep 60"], start_new_session=True)
 Path({pid_path:?}).write_text(str(proc.pid))
 time.sleep(60)
 "#

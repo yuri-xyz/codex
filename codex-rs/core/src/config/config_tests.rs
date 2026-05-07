@@ -6812,6 +6812,7 @@ fn create_test_fixture() -> std::io::Result<PrecedenceTestFixture> {
     let toml = r#"
 model = "o3"
 approval_policy = "untrusted"
+default_permissions = ":read-only"
 
 # Can be used to determine which profile to use if not specified by
 # `ConfigOverrides`.
@@ -7037,7 +7038,9 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             features: Features::with_defaults().into(),
             suppress_unstable_features_warning: false,
             active_profile: Some("o3".to_string()),
-            active_project: ProjectConfig { trust_level: None },
+            active_project: ProjectConfig {
+                trust_level: Some(TrustLevel::Trusted),
+            },
             windows_wsl_setup_acknowledged: false,
             notices: Default::default(),
             check_for_update_on_startup: true,
@@ -7296,7 +7299,9 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         features: Features::with_defaults().into(),
         suppress_unstable_features_warning: false,
         active_profile: Some("gpt3".to_string()),
-        active_project: ProjectConfig { trust_level: None },
+        active_project: ProjectConfig {
+            trust_level: Some(TrustLevel::Trusted),
+        },
         windows_wsl_setup_acknowledged: false,
         notices: Default::default(),
         check_for_update_on_startup: true,
@@ -7454,7 +7459,9 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         features: Features::with_defaults().into(),
         suppress_unstable_features_warning: false,
         active_profile: Some("zdr".to_string()),
-        active_project: ProjectConfig { trust_level: None },
+        active_project: ProjectConfig {
+            trust_level: Some(TrustLevel::Trusted),
+        },
         windows_wsl_setup_acknowledged: false,
         notices: Default::default(),
         check_for_update_on_startup: true,
@@ -7597,7 +7604,9 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         features: Features::with_defaults().into(),
         suppress_unstable_features_warning: false,
         active_profile: Some("gpt5".to_string()),
-        active_project: ProjectConfig { trust_level: None },
+        active_project: ProjectConfig {
+            trust_level: Some(TrustLevel::Trusted),
+        },
         windows_wsl_setup_acknowledged: false,
         notices: Default::default(),
         check_for_update_on_startup: true,

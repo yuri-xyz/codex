@@ -51,7 +51,7 @@ impl ConfigReloader for StaticReloader {
 
 fn shell_with_snapshot(
     shell_type: ShellType,
-    shell_path: &str,
+    shell_path: impl Into<PathBuf>,
     snapshot_path: AbsolutePathBuf,
     snapshot_cwd: AbsolutePathBuf,
 ) -> Shell {
@@ -61,9 +61,21 @@ fn shell_with_snapshot(
     })));
     Shell {
         shell_type,
-        shell_path: PathBuf::from(shell_path),
+        shell_path: shell_path.into(),
         shell_snapshot,
     }
+}
+
+#[cfg(unix)]
+fn bash_path() -> Option<String> {
+    which::which("bash")
+        .ok()
+        .or_else(|| {
+            PathBuf::from("/bin/bash")
+                .exists()
+                .then(|| PathBuf::from("/bin/bash"))
+        })
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 async fn test_network_proxy() -> anyhow::Result<NetworkProxy> {
@@ -382,6 +394,9 @@ fn maybe_wrap_shell_lc_with_snapshot_accepts_dot_alias_cwd() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_restores_explicit_override_precedence() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -391,12 +406,12 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_explicit_override_precedence() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         "printf '%s|%s' \"$TEST_ENV_SNAPSHOT\" \"${SNAPSHOT_ONLY-unset}\"".to_string(),
     ];
@@ -424,6 +439,9 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_explicit_override_precedence() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_restores_codex_thread_id_from_env() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -433,12 +451,12 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_thread_id_from_env() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         "printf '%s' \"$CODEX_THREAD_ID\"".to_string(),
     ];
@@ -461,6 +479,9 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_thread_id_from_env() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_restores_proxy_env_from_process_env() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -474,12 +495,12 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_proxy_env_from_process_env() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         "printf '%s\\n%s\\n%s\\n%s' \"$PIP_PROXY\" \"$HTTP_PROXY\" \"$http_proxy\" \"$GIT_SSH_COMMAND\""
             .to_string(),
@@ -651,6 +672,9 @@ fn maybe_wrap_shell_lc_with_snapshot_clears_stale_codex_git_ssh_command_without_
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_keeps_user_proxy_env_when_proxy_inactive() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -660,12 +684,12 @@ fn maybe_wrap_shell_lc_with_snapshot_keeps_user_proxy_env_when_proxy_inactive() 
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         "printf '%s' \"$HTTP_PROXY\"".to_string(),
     ];
@@ -692,6 +716,9 @@ fn maybe_wrap_shell_lc_with_snapshot_keeps_user_proxy_env_when_proxy_inactive() 
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_restores_live_env_when_snapshot_proxy_active() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -706,12 +733,12 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_live_env_when_snapshot_proxy_activ
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         format!(
             "if [ \"${{PIP_PROXY+x}}\" = x ]; then printf 'pip:%s\\n' \"$PIP_PROXY\"; else printf 'pip:unset\\n'; fi; \
@@ -746,6 +773,9 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_live_env_when_snapshot_proxy_activ
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_keeps_snapshot_path_without_override() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -755,15 +785,11 @@ fn maybe_wrap_shell_lc_with_snapshot_keeps_snapshot_path_without_override() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
-    let command = vec![
-        "/bin/bash".to_string(),
-        "-lc".to_string(),
-        "printf '%s' \"$PATH\"".to_string(),
-    ];
+    let command = vec![bash, "-lc".to_string(), "printf '%s' \"$PATH\"".to_string()];
     let rewritten = maybe_wrap_shell_lc_with_snapshot(
         &command,
         &session_shell,
@@ -782,6 +808,9 @@ fn maybe_wrap_shell_lc_with_snapshot_keeps_snapshot_path_without_override() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_applies_explicit_path_override() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -791,15 +820,11 @@ fn maybe_wrap_shell_lc_with_snapshot_applies_explicit_path_override() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
-    let command = vec![
-        "/bin/bash".to_string(),
-        "-lc".to_string(),
-        "printf '%s' \"$PATH\"".to_string(),
-    ];
+    let command = vec![bash, "-lc".to_string(), "printf '%s' \"$PATH\"".to_string()];
     let explicit_env_overrides = HashMap::from([("PATH".to_string(), "/worktree/bin".to_string())]);
     let rewritten = maybe_wrap_shell_lc_with_snapshot(
         &command,
@@ -820,6 +845,9 @@ fn maybe_wrap_shell_lc_with_snapshot_applies_explicit_path_override() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -829,12 +857,12 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-        "/bin/bash".to_string(),
+        bash,
         "-lc".to_string(),
         "printf '%s' \"$OPENAI_API_KEY\"".to_string(),
     ];
@@ -868,6 +896,9 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
 
 #[test]
 fn maybe_wrap_shell_lc_with_snapshot_preserves_unset_override_variables() {
+    let Some(bash) = bash_path() else {
+        return;
+    };
     let dir = tempdir().expect("create temp dir");
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
@@ -877,12 +908,12 @@ fn maybe_wrap_shell_lc_with_snapshot_preserves_unset_override_variables() {
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
         ShellType::Bash,
-        "/bin/bash",
+        bash.clone(),
         snapshot_path.abs(),
         dir.path().abs(),
     );
     let command = vec![
-            "/bin/bash".to_string(),
+            bash,
             "-lc".to_string(),
             "if [ \"${CODEX_TEST_UNSET_OVERRIDE+x}\" = x ]; then printf 'set:%s' \"$CODEX_TEST_UNSET_OVERRIDE\"; else printf 'unset'; fi".to_string(),
         ];

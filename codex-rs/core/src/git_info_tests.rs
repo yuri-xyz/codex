@@ -15,6 +15,13 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::process::Command;
 
+fn ambient_repo_safe_tempdir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("codex-core-tests")
+        .tempdir_in("/var/tmp")
+        .unwrap_or_else(|_| TempDir::new().expect("tempdir"))
+}
+
 // Helper function to create a test git repository
 async fn create_test_git_repo(temp_dir: &TempDir) -> PathBuf {
     let repo_path = temp_dir.path().join("repo");
@@ -432,7 +439,7 @@ async fn test_get_git_working_tree_state_branch_fallback() {
 
 #[tokio::test]
 async fn resolve_root_git_project_for_trust_returns_none_outside_repo() {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = ambient_repo_safe_tempdir();
     assert!(
         resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &tmp.path().abs())
             .await

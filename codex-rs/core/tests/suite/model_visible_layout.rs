@@ -417,6 +417,7 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "yuri-xyz fork uses deterministic local compaction"]
 async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

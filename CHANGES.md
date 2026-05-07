@@ -55,3 +55,4 @@ git log --author="yuri-xyz" --oneline
 - Deferred the TUI `Worked for ...` turn separator until the next visible transcript entry so idle completed turns no longer end with a divider above the composer.
 - Dimmed normal TUI composer separator lines to match the darker transcript separators.
 - Added configurable TUI status-line items for 5-hour and weekly usage-limit reset times.
+- Re-aligned the core test suite with fork-specific trust, deterministic compaction, shell snapshot, and agent-resume behavior after an upstream merge.

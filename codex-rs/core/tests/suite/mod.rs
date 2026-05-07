@@ -37,12 +37,18 @@ mod apply_patch_cli;
 mod approvals;
 mod cli_stream;
 mod client;
+// Disabled in this fork because telemetry trace propagation is intentionally removed.
+#[cfg(any())]
 mod client_websockets;
 mod code_mode;
 mod codex_delegate;
 mod collaboration_instructions;
+// Disabled in this fork because compaction is deterministic and local instead of remote/API-backed.
+#[cfg(any())]
 mod compact;
+#[cfg(any())]
 mod compact_remote;
+#[cfg(any())]
 mod compact_resume_fork;
 mod deprecation_notice;
 mod exec;

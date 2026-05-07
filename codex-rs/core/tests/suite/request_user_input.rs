@@ -203,10 +203,13 @@ where
     let mut builder = test_codex();
     if mode_name == "Default" {
         builder = builder.with_config(|config| {
-            config
+            let result = config
                 .features
-                .disable(Feature::DefaultModeRequestUserInput)
-                .expect("test config should allow feature update");
+                .disable(Feature::DefaultModeRequestUserInput);
+            assert!(
+                result.is_ok(),
+                "test config should allow feature update: {result:?}"
+            );
         });
     }
     let TestCodex {

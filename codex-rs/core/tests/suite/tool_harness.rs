@@ -62,7 +62,7 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
     } = builder.build(&server).await?;
 
     let call_id = "shell-tool-call";
-    let command = vec!["/bin/echo", "tool harness"];
+    let command = vec!["echo", "tool harness"];
     let first_response = sse(vec![
         ev_response_created("resp-1"),
         ev_local_shell_call(call_id, "completed", command),

@@ -24,10 +24,16 @@ use tempfile::TempDir;
 use wiremock::matchers::header;
 
 fn normalize_git_remote_url(url: &str) -> String {
-    let normalized = url.trim().trim_end_matches('/');
+    let normalized = url
+        .trim()
+        .trim_end_matches('/')
+        .strip_prefix("ssh://git@github.com/")
+        .or_else(|| url.trim().strip_prefix("git@github.com:"))
+        .map(|path| format!("https://github.com/{path}"))
+        .unwrap_or_else(|| url.trim().trim_end_matches('/').to_string());
     normalized
         .strip_suffix(".git")
-        .unwrap_or(normalized)
+        .unwrap_or(&normalized)
         .to_string()
 }
 

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use anyhow::Result;
 use codex_features::Feature;
 use core_test_support::responses::ev_completed;
@@ -20,6 +21,29 @@ use wiremock::Respond;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path_regex;
+
+fn run_agent_job_test(
+    future: impl std::future::Future<Output = Result<()>> + Send + 'static,
+) -> Result<()> {
+    const TEST_STACK_SIZE_BYTES: usize = 16 * 1024 * 1024;
+
+    let handle = std::thread::Builder::new()
+        .name("agent_jobs_test".to_string())
+        .stack_size(TEST_STACK_SIZE_BYTES)
+        .spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(TEST_STACK_SIZE_BYTES)
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(future))
+        })?;
+
+    match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("agent jobs test thread panicked")),
+    }
+}
 
 struct AgentJobsResponder {
     spawn_args_json: String,
@@ -218,18 +242,24 @@ fn parse_simple_csv_line(line: &str) -> Vec<String> {
     line.split(',').map(str::to_string).collect()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn report_agent_job_result_rejects_wrong_thread() -> Result<()> {
+#[test]
+fn report_agent_job_result_rejects_wrong_thread() -> Result<()> {
+    run_agent_job_test(report_agent_job_result_rejects_wrong_thread_impl())
+}
+
+async fn report_agent_job_result_rejects_wrong_thread_impl() -> Result<()> {
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::SpawnCsv)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::Sqlite)
-            .expect("test config should allow feature update");
+        let spawn_csv = config.features.enable(Feature::SpawnCsv);
+        assert!(
+            spawn_csv.is_ok(),
+            "test config should allow feature update: {spawn_csv:?}"
+        );
+        let sqlite = config.features.enable(Feature::Sqlite);
+        assert!(
+            sqlite.is_ok(),
+            "test config should allow feature update: {sqlite:?}"
+        );
     });
     let test = builder.build(&server).await?;
 
@@ -253,7 +283,7 @@ async fn report_agent_job_result_rejects_wrong_thread() -> Result<()> {
 
     test.submit_turn("run job").await?;
 
-    let db = test.codex.state_db().expect("state db");
+    let db = test.codex.state_db().context("state db")?;
     let output = fs::read_to_string(&output_path)?;
     let rows: Vec<&str> = output.lines().skip(1).collect();
     assert_eq!(rows.len(), 1);
@@ -265,12 +295,12 @@ async fn report_agent_job_result_rejects_wrong_thread() -> Result<()> {
                 .find(|value| value.len() == 36)
                 .cloned()
         })
-        .expect("job_id from csv");
-    let job = db.get_agent_job(job_id.as_str()).await?.expect("job");
+        .context("job_id from csv")?;
+    let job = db.get_agent_job(job_id.as_str()).await?.context("job")?;
     let items = db
         .list_agent_job_items(job.id.as_str(), /*status*/ None, Some(10))
         .await?;
-    let item = items.first().expect("item");
+    let item = items.first().context("item")?;
     let wrong_thread_id = "00000000-0000-0000-0000-000000000000";
     let accepted = db
         .report_agent_job_item_result(
@@ -284,18 +314,24 @@ async fn report_agent_job_result_rejects_wrong_thread() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agents_on_csv_runs_and_exports() -> Result<()> {
+#[test]
+fn spawn_agents_on_csv_runs_and_exports() -> Result<()> {
+    run_agent_job_test(spawn_agents_on_csv_runs_and_exports_impl())
+}
+
+async fn spawn_agents_on_csv_runs_and_exports_impl() -> Result<()> {
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::SpawnCsv)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::Sqlite)
-            .expect("test config should allow feature update");
+        let spawn_csv = config.features.enable(Feature::SpawnCsv);
+        assert!(
+            spawn_csv.is_ok(),
+            "test config should allow feature update: {spawn_csv:?}"
+        );
+        let sqlite = config.features.enable(Feature::Sqlite);
+        assert!(
+            sqlite.is_ok(),
+            "test config should allow feature update: {sqlite:?}"
+        );
     });
     let test = builder.build(&server).await?;
 
@@ -326,19 +362,25 @@ async fn spawn_agents_on_csv_runs_and_exports() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agents_on_csv_dedupes_item_ids() -> Result<()> {
+#[test]
+fn spawn_agents_on_csv_dedupes_item_ids() -> Result<()> {
+    run_agent_job_test(spawn_agents_on_csv_dedupes_item_ids_impl())
+}
+
+async fn spawn_agents_on_csv_dedupes_item_ids_impl() -> Result<()> {
     let server = start_mock_server().await;
 
     let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::SpawnCsv)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::Sqlite)
-            .expect("test config should allow feature update");
+        let spawn_csv = config.features.enable(Feature::SpawnCsv);
+        assert!(
+            spawn_csv.is_ok(),
+            "test config should allow feature update: {spawn_csv:?}"
+        );
+        let sqlite = config.features.enable(Feature::Sqlite);
+        assert!(
+            sqlite.is_ok(),
+            "test config should allow feature update: {sqlite:?}"
+        );
     });
     let test = builder.build(&server).await?;
 
@@ -365,12 +407,12 @@ async fn spawn_agents_on_csv_dedupes_item_ids() -> Result<()> {
 
     let output = fs::read_to_string(&output_path)?;
     let mut lines = output.lines();
-    let headers = lines.next().expect("csv headers");
+    let headers = lines.next().context("csv headers")?;
     let header_cols = parse_simple_csv_line(headers);
     let item_id_index = header_cols
         .iter()
         .position(|header| header == "item_id")
-        .expect("item_id column");
+        .context("item_id column")?;
 
     let mut item_ids = Vec::new();
     for line in lines {
@@ -385,18 +427,24 @@ async fn spawn_agents_on_csv_dedupes_item_ids() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agents_on_csv_stop_halts_future_items() -> Result<()> {
+#[test]
+fn spawn_agents_on_csv_stop_halts_future_items() -> Result<()> {
+    run_agent_job_test(spawn_agents_on_csv_stop_halts_future_items_impl())
+}
+
+async fn spawn_agents_on_csv_stop_halts_future_items_impl() -> Result<()> {
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::SpawnCsv)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::Sqlite)
-            .expect("test config should allow feature update");
+        let spawn_csv = config.features.enable(Feature::SpawnCsv);
+        assert!(
+            spawn_csv.is_ok(),
+            "test config should allow feature update: {spawn_csv:?}"
+        );
+        let sqlite = config.features.enable(Feature::Sqlite);
+        assert!(
+            sqlite.is_ok(),
+            "test config should allow feature update: {sqlite:?}"
+        );
     });
     let test = builder.build(&server).await?;
 
@@ -433,9 +481,9 @@ async fn spawn_agents_on_csv_stop_halts_future_items() -> Result<()> {
                 .find(|value| value.len() == 36)
                 .cloned()
         })
-        .expect("job_id from csv");
-    let db = test.codex.state_db().expect("state db");
-    let job = db.get_agent_job(job_id.as_str()).await?.expect("job");
+        .context("job_id from csv")?;
+    let db = test.codex.state_db().context("state db")?;
+    let job = db.get_agent_job(job_id.as_str()).await?.context("job")?;
     assert_eq!(job.status, codex_state::AgentJobStatus::Cancelled);
     let progress = db.get_agent_job_progress(job_id.as_str()).await?;
     assert_eq!(progress.total_items, 3);

@@ -488,6 +488,7 @@ async fn user_input_does_not_preempt_after_reasoning_item() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "yuri-xyz fork uses deterministic local compaction"]
 async fn steered_user_input_waits_for_model_continuation_after_mid_turn_compact() {
     let first_chunks = vec![
         chunk(ev_response_created("resp-1")),
@@ -583,6 +584,7 @@ async fn steered_user_input_waits_for_model_continuation_after_mid_turn_compact(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "yuri-xyz fork uses deterministic local compaction"]
 async fn steered_user_input_follows_compact_when_only_the_steer_needs_follow_up() {
     let (gate_first_completed_tx, gate_first_completed_rx) = oneshot::channel();
 
@@ -672,6 +674,7 @@ async fn steered_user_input_follows_compact_when_only_the_steer_needs_follow_up(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "yuri-xyz fork uses deterministic local compaction"]
 async fn steered_user_input_waits_when_tool_output_triggers_compact_before_next_request() {
     let (gate_first_completed_tx, gate_first_completed_rx) = oneshot::channel();
 

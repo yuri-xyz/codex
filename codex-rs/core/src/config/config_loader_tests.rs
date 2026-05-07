@@ -35,8 +35,16 @@ use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
+use tempfile::TempDir;
 use tempfile::tempdir;
 use toml::Value as TomlValue;
+
+fn ambient_repo_safe_tempdir() -> std::io::Result<TempDir> {
+    tempfile::Builder::new()
+        .prefix("codex-core-tests")
+        .tempdir_in("/var/tmp")
+        .or_else(|_| tempdir())
+}
 
 fn config_error_from_io(err: &std::io::Error) -> &ConfigError {
     err.get_ref()
@@ -368,7 +376,7 @@ async fn returns_empty_when_all_layers_missing() {
 
 #[tokio::test]
 async fn includes_thread_config_layers_in_stack() -> anyhow::Result<()> {
-    let tmp = tempdir()?;
+    let tmp = ambient_repo_safe_tempdir()?;
     let cwd_dir = tmp.path().join("project");
     tokio::fs::create_dir_all(&cwd_dir).await?;
     let cwd = AbsolutePathBuf::from_absolute_path(&cwd_dir)?;
@@ -1507,7 +1515,7 @@ async fn project_layer_is_added_when_dot_codex_exists_without_config_toml() -> s
 
 #[tokio::test]
 async fn codex_home_is_not_loaded_as_project_layer_from_home_dir() -> std::io::Result<()> {
-    let tmp = tempdir()?;
+    let tmp = ambient_repo_safe_tempdir()?;
     let home_dir = tmp.path().join("home");
     let codex_home = home_dir.join(".codex");
     tokio::fs::create_dir_all(&codex_home).await?;
@@ -1726,7 +1734,12 @@ async fn project_layers_disabled_when_untrusted_but_enabled_when_unknown() -> st
         layers_unknown.effective_config().get("foo"),
         Some(&TomlValue::String("child".to_string()))
     );
-    assert_eq!(layers_unknown.startup_warnings(), Some(empty_warnings));
+    let unknown_warnings = layers_unknown
+        .startup_warnings()
+        .expect("unknown trusted project with unsupported keys should warn");
+    assert_eq!(unknown_warnings.len(), 1);
+    assert!(unknown_warnings[0].contains("Ignored unsupported project-local config keys"));
+    assert!(unknown_warnings[0].contains("profile"));
 
     Ok(())
 }

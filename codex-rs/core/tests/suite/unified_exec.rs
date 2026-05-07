@@ -384,7 +384,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
     let call_id = "uexec-begin-event";
     let args = json!({
         "shell": "bash".to_string(),
-        "cmd": "/bin/echo hello unified exec".to_string(),
+        "cmd": "echo hello unified exec".to_string(),
         "yield_time_ms": 250,
     });
 
@@ -410,7 +410,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
     })
     .await;
 
-    assert_command(&begin_event.command, "-lc", "/bin/echo hello unified exec");
+    assert_command(&begin_event.command, "-lc", "echo hello unified exec");
 
     assert_eq!(begin_event.cwd.as_path(), cwd.as_path());
 
@@ -575,7 +575,7 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
 
     let call_id = "uexec-end-event";
     let args = json!({
-        "cmd": "/bin/echo END-EVENT".to_string(),
+        "cmd": "echo END-EVENT".to_string(),
         "yield_time_ms": 250,
     });
     let poll_call_id = "uexec-end-event-poll";
@@ -1026,7 +1026,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
 
     let open_call_id = "uexec-open";
     let open_args = json!({
-        "cmd": "/bin/bash -i",
+        "cmd": "bash -i",
         "yield_time_ms": 200,
         "tty": true,
     });
@@ -1867,7 +1867,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     let exit_call_id = "uexec-cat-exit";
 
     let start_args = serde_json::json!({
-        "cmd": "/bin/cat",
+        "cmd": "cat",
         "yield_time_ms": 500,
         "tty": true,
     });
@@ -2018,7 +2018,7 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
 
     let start_call_id = "uexec-end-on-exit-start";
     let start_args = serde_json::json!({
-        "cmd": "/bin/cat",
+        "cmd": "cat",
         "yield_time_ms": 200,
         "tty": true,
     });
@@ -2301,7 +2301,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
 
     let first_call_id = "uexec-start";
     let first_args = serde_json::json!({
-        "cmd": "/bin/cat",
+        "cmd": "cat",
         "yield_time_ms": 200,
         "tty": true,
     });
@@ -3104,7 +3104,7 @@ async fn unified_exec_prunes_exited_sessions_first() -> Result<()> {
 
     let keep_call_id = "uexec-prune-keep";
     let keep_args = serde_json::json!({
-        "cmd": "/bin/cat",
+        "cmd": "cat",
         "yield_time_ms": 250,
         "tty": true,
     });

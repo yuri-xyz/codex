@@ -51,7 +51,6 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
-use tracing::Span;
 
 use crate::goals::ExternalGoalPreviousStatus;
 use crate::goals::ExternalGoalSet;
@@ -89,9 +88,11 @@ use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
 use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
 use codex_otel::THREAD_SKILLS_TRUNCATED_METRIC;
 use codex_otel::TelemetryAuthMode;
+use codex_otel::span_w3c_trace_context;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::mcp::CallToolResult as McpCallToolResult;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -146,27 +147,22 @@ use core_test_support::test_path_buf;
 use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
-use opentelemetry::trace::TraceContextExt;
-use opentelemetry::trace::TraceId;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use opentelemetry_sdk::metrics::data::AggregatedMetrics;
 use opentelemetry_sdk::metrics::data::Metric;
 use opentelemetry_sdk::metrics::data::MetricData;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
-use std::path::Path;
-use std::time::Duration;
-use tokio::sync::Semaphore;
-use tokio::time::sleep;
-use tokio::time::timeout;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
-
-use codex_protocol::mcp::CallToolResult as McpCallToolResult;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Duration as StdDuration;
+use tokio::sync::Semaphore;
+use tokio::time::sleep;
+use tokio::time::timeout;
 
 mod guardian_tests;
 
@@ -4476,14 +4472,13 @@ async fn submit_with_id_captures_current_span_trace_context() {
         tracestate: Some("vendor=value".into()),
     };
     let request_span = info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
+    assert!(!set_parent_from_w3c_trace_context(
         &request_span,
         &request_parent
     ));
 
     let expected_trace = async {
-        let expected_trace =
-            current_span_w3c_trace_context().expect("current span should have trace context");
+        let expected_trace = current_span_w3c_trace_context();
         codex
             .submit_with_id(Submission {
                 id: "sub-1".into(),
@@ -4498,7 +4493,7 @@ async fn submit_with_id_captures_current_span_trace_context() {
     .await;
 
     let submitted = rx_sub.recv().await.expect("submission");
-    assert_eq!(submitted.trace, Some(expected_trace));
+    assert_eq!(submitted.trace, expected_trace);
 }
 
 #[tokio::test]
@@ -4512,34 +4507,25 @@ async fn new_default_turn_captures_current_span_trace_id() {
         tracestate: Some("vendor=value".into()),
     };
     let request_span = info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
+    assert!(!set_parent_from_w3c_trace_context(
         &request_span,
         &request_parent
     ));
 
     let turn_context_item = async {
-        let expected_trace_id = Span::current()
-            .context()
-            .span()
-            .span_context()
-            .trace_id()
-            .to_string();
         let turn_context = session.new_default_turn().await;
         let turn_context_item = turn_context.to_turn_context_item();
-        assert_eq!(turn_context_item.trace_id, Some(expected_trace_id));
+        assert_eq!(turn_context_item.trace_id, None);
         turn_context_item
     }
     .instrument(request_span)
     .await;
 
-    assert_eq!(
-        turn_context_item.trace_id.as_deref(),
-        Some("00000000000000000000000000000011")
-    );
+    assert_eq!(turn_context_item.trace_id, None);
 }
 
 #[test]
-fn submission_dispatch_span_prefers_submission_trace_context() {
+fn submission_dispatch_span_omits_submission_trace_context_in_fork() {
     let _trace_test_context = install_test_tracing("codex-core-tests");
 
     let ambient_parent = W3cTraceContext {
@@ -4547,7 +4533,7 @@ fn submission_dispatch_span_prefers_submission_trace_context() {
         tracestate: None,
     };
     let ambient_span = info_span!("ambient");
-    assert!(set_parent_from_w3c_trace_context(
+    assert!(!set_parent_from_w3c_trace_context(
         &ambient_span,
         &ambient_parent
     ));
@@ -4564,11 +4550,7 @@ fn submission_dispatch_span_prefers_submission_trace_context() {
         })
     });
 
-    let trace_id = dispatch_span.context().span().span_context().trace_id();
-    assert_eq!(
-        trace_id,
-        TraceId::from_hex("00000000000000000000000000000055").expect("trace id")
-    );
+    assert_eq!(span_w3c_trace_context(&dispatch_span), None);
 }
 
 #[test]
@@ -4948,22 +4930,20 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
         tracestate: Some("vendor=value".into()),
     };
     let request_span = tracing::info_span!("app_server.request");
-    assert!(set_parent_from_w3c_trace_context(
+    assert!(!set_parent_from_w3c_trace_context(
         &request_span,
         &request_parent
     ));
 
-    let submission_trace =
-        async { current_span_w3c_trace_context().expect("request span should have trace context") }
-            .instrument(request_span)
-            .await;
+    let submission_trace = async { current_span_w3c_trace_context() }
+        .instrument(request_span)
+        .await;
 
     let dispatch_span = submission_dispatch_span(&Submission {
         id: "sub-1".into(),
         op: Op::Interrupt,
-        trace: Some(submission_trace.clone()),
+        trace: submission_trace,
     });
-    let dispatch_span_id = dispatch_span.context().span().span_context().span_id();
 
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let captured_trace = Arc::new(std::sync::Mutex::new(None));
@@ -4993,20 +4973,8 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
     let task_trace = captured_trace
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-        .expect("turn task should capture the current span trace context");
-    let submission_context =
-        codex_otel::context_from_w3c_trace_context(&submission_trace).expect("submission");
-    let task_context = codex_otel::context_from_w3c_trace_context(&task_trace).expect("task trace");
-
-    assert_eq!(
-        task_context.span().span_context().trace_id(),
-        submission_context.span().span_context().trace_id()
-    );
-    assert_ne!(
-        task_context.span().span_context().span_id(),
-        dispatch_span_id
-    );
+        .clone();
+    assert_eq!(task_trace, None);
 }
 
 #[cfg(debug_assertions)]
@@ -6496,12 +6464,15 @@ fn file_system_policy_with_unreadable_glob(turn_context: &TurnContext) -> FileSy
 }
 
 #[tokio::test]
-async fn turn_context_item_omits_legacy_equivalent_file_system_sandbox_policy() {
+async fn turn_context_item_stores_default_file_system_sandbox_policy() {
     let (_session, turn_context) = make_session_and_context().await;
 
     let item = turn_context.to_turn_context_item();
 
-    assert_eq!(item.file_system_sandbox_policy, None);
+    assert_eq!(
+        item.file_system_sandbox_policy,
+        Some(turn_context.file_system_sandbox_policy())
+    );
     assert_eq!(
         item.permission_profile,
         Some(turn_context.permission_profile())
@@ -8905,16 +8876,20 @@ async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io:
         config_layer_stack: Some(config.config_layer_stack.clone()),
         ..codex_hooks::HooksConfig::default()
     });
-    let expected_source_path = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
-        nested_dot_codex.join("hooks.json"),
+    let expected_root_source_path = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+        root_dot_codex.join("hooks.json"),
     )?;
+    let expected_nested_source_path =
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+            nested_dot_codex.join("hooks.json"),
+        )?;
     assert_eq!(
         hook_list
             .hooks
             .iter()
             .map(|hook| &hook.source_path)
             .collect::<Vec<_>>(),
-        vec![&expected_source_path],
+        vec![&expected_root_source_path, &expected_nested_source_path],
     );
     assert_eq!(
         hook_list.hooks[0].trust_status,
@@ -8936,7 +8911,7 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
     write_project_hooks(&dot_codex)?;
 
     let cases = [
-        ("unknown", Vec::<(&Path, TrustLevel)>::new(), 0_usize),
+        ("unknown", Vec::<(&Path, TrustLevel)>::new(), 1_usize),
         (
             "untrusted",
             vec![(&project_root as &Path, TrustLevel::Untrusted)],

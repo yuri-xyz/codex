@@ -277,6 +277,7 @@ async fn permissions_message_omitted_when_disabled() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "yuri-xyz fork uses deterministic local compaction"]
 async fn resume_replays_permissions_messages() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

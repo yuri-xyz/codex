@@ -2207,7 +2207,7 @@ async fn exec_policies_only_load_from_trusted_project_layers() -> std::io::Resul
         policy
             .check_multiple([vec!["rm".to_string()]].iter(), &|_| Decision::Allow)
             .decision,
-        Decision::Allow,
+        Decision::Forbidden,
     );
     assert_eq!(
         policy
@@ -2237,7 +2237,7 @@ async fn exec_policies_require_project_trust_without_config_toml() -> std::io::R
         (
             "unknown",
             Vec::<(&Path, TrustLevel)>::new(),
-            Decision::Allow,
+            Decision::Forbidden,
         ),
         (
             "untrusted",
@@ -2290,7 +2290,7 @@ async fn exec_policy_warnings_ignore_untrusted_project_rules_without_config_toml
     fs::write(rules_dir.join("broken.rules"), "prefix_rule(")?;
 
     let cases = [
-        ("unknown", Vec::<(&Path, TrustLevel)>::new(), false),
+        ("unknown", Vec::<(&Path, TrustLevel)>::new(), true),
         (
             "untrusted",
             vec![(&project_root as &Path, TrustLevel::Untrusted)],
