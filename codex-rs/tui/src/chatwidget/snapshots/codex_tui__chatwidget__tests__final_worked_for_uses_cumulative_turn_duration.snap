@@ -1,8 +1,12 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-expression: combined
+expression: turn_complete_combined
 ---
+• Ran echo preparing
+  └ preparing
+
+────────────────────────────────────────────────────────────────────────────────
+
+• Final response.
+
 ─ Worked for 2m 05s ────────────────────────────────────────────────────────────
-
-
-› Next request.

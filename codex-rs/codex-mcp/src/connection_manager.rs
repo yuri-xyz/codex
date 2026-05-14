@@ -7,7 +7,6 @@
 //! `codex-core`.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +33,7 @@ use crate::server::EffectiveMcpServer;
 use crate::server::McpServerMetadata;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
-use crate::tools::qualify_tools;
+use crate::tools::normalize_tools_for_model;
 use crate::tools::tool_with_model_visible_input_schema;
 use anyhow::Context;
 use anyhow::Result;
@@ -44,7 +43,6 @@ use codex_config::Constrained;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
-use codex_protocol::ToolName;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -55,6 +53,7 @@ use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ElicitationResponse;
+use rmcp::model::ElicitationCapability;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
@@ -130,17 +129,6 @@ impl McpConnectionManager {
             .is_none_or(|metadata| metadata.pollutes_memory)
     }
 
-    pub fn parallel_tool_call_server_names(&self) -> HashSet<String> {
-        self.server_metadata
-            .iter()
-            .filter_map(|(name, metadata)| {
-                metadata
-                    .supports_parallel_tool_calls
-                    .then_some(name.clone())
-            })
-            .collect()
-    }
-
     pub fn is_host_owned_codex_apps_server(&self, server_name: &str) -> bool {
         self.host_owned_codex_apps_enabled && server_name == CODEX_APPS_MCP_SERVER_NAME
     }
@@ -178,6 +166,7 @@ impl McpConnectionManager {
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         host_owned_codex_apps_enabled: bool,
+        client_elicitation_capability: ElicitationCapability,
         tool_plugin_provenance: ToolPluginProvenance,
         auth: Option<&CodexAuth>,
         elicitation_reviewer: Option<ElicitationReviewerHandle>,
@@ -246,8 +235,8 @@ impl McpConnectionManager {
                 codex_apps_tools_cache_context,
                 Arc::clone(&tool_plugin_provenance),
                 runtime_environment.clone(),
-                codex_home.clone(),
                 runtime_auth_provider,
+                client_elicitation_capability.clone(),
             );
             clients.insert(server_name.clone(), async_managed_client.clone());
             let tx_event = tx_event.clone();
@@ -363,26 +352,29 @@ impl McpConnectionManager {
         failures
     }
 
-    /// Returns a single map that contains all tools. Each key is the
-    /// fully-qualified name for the tool.
+    /// Returns all tools with model-visible names normalized.
     #[instrument(level = "trace", skip_all)]
-    pub async fn list_all_tools(&self) -> HashMap<String, ToolInfo> {
+    pub async fn list_all_tools(&self) -> Vec<ToolInfo> {
         let mut tools = Vec::new();
         for managed_client in self.clients.values() {
             let Some(server_tools) = managed_client.listed_tools().await else {
                 continue;
             };
-            tools.extend(server_tools);
+            tools.extend(
+                server_tools
+                    .into_iter()
+                    .map(|tool| self.with_server_metadata(tool)),
+            );
         }
-        qualify_tools(tools)
+        normalize_tools_for_model(tools)
     }
 
     /// Force-refresh codex apps tools by bypassing the in-process cache.
     ///
     /// On success, the refreshed tools replace the cache contents and the
-    /// latest filtered tool map is returned directly to the caller. On
+    /// latest filtered tools are returned directly to the caller. On
     /// failure, the existing cache remains unchanged.
-    pub async fn hard_refresh_codex_apps_tools_cache(&self) -> Result<HashMap<String, ToolInfo>> {
+    pub async fn hard_refresh_codex_apps_tools_cache(&self) -> Result<Vec<ToolInfo>> {
         let managed_client = self
             .clients
             .get(CODEX_APPS_MCP_SERVER_NAME)
@@ -423,9 +415,24 @@ impl McpConnectionManager {
             .into_iter()
             .map(|mut tool| {
                 tool.tool = tool_with_model_visible_input_schema(&tool.tool);
-                tool
+                self.with_server_metadata(tool)
             });
-        Ok(qualify_tools(tools))
+        Ok(normalize_tools_for_model(tools))
+    }
+
+    fn with_server_metadata(&self, mut tool: ToolInfo) -> ToolInfo {
+        let Some(metadata) = self.server_metadata.get(&tool.server_name) else {
+            tool.supports_parallel_tool_calls = false;
+            tool.server_origin = None;
+            return tool;
+        };
+
+        tool.supports_parallel_tool_calls = metadata.supports_parallel_tool_calls;
+        tool.server_origin = metadata
+            .origin
+            .as_ref()
+            .map(|origin| origin.as_str().to_string());
+        tool
     }
 
     /// Returns a single map that contains all resources. Each key is the
@@ -659,13 +666,6 @@ impl McpConnectionManager {
             .read_resource(params, timeout)
             .await
             .with_context(|| format!("resources/read failed for `{server}` ({uri})"))
-    }
-
-    pub async fn resolve_tool_info(&self, tool_name: &ToolName) -> Option<ToolInfo> {
-        let all_tools = self.list_all_tools().await;
-        all_tools
-            .into_values()
-            .find(|tool| tool.canonical_tool_name() == *tool_name)
     }
 
     async fn client_by_name(&self, name: &str) -> Result<ManagedClient> {

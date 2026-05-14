@@ -4,11 +4,13 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::mcp_resource_spec::create_read_mcp_resource_tool;
+use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use crate::tools::registry::ToolKind;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::McpInvocation;
 use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 
 use rmcp::model::ReadResourceRequestParams;
 
@@ -24,15 +26,20 @@ use super::serialize_function_output;
 
 pub struct ReadMcpResourceHandler;
 
-impl ToolHandler for ReadMcpResourceHandler {
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for ReadMcpResourceHandler {
     type Output = FunctionToolOutput;
 
     fn tool_name(&self) -> ToolName {
         ToolName::plain("read_mcp_resource")
     }
 
-    fn kind(&self) -> ToolKind {
-        ToolKind::Function
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_read_mcp_resource_tool())
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
@@ -139,3 +146,5 @@ impl ToolHandler for ReadMcpResourceHandler {
         }
     }
 }
+
+impl ToolHandler for ReadMcpResourceHandler {}

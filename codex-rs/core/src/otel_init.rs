@@ -20,3 +20,7 @@ pub fn codex_export_filter(meta: &tracing::Metadata<'_>) -> bool {
     let _ = meta;
     false
 }
+
+pub fn record_process_start(_otel: Option<&OtelProvider>, _originator: &str) {}
+
+pub fn install_sqlite_telemetry(_otel: Option<&OtelProvider>, _originator: &str) {}

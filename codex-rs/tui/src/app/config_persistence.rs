@@ -38,6 +38,7 @@ impl App {
             .codex_home(self.config.codex_home.to_path_buf())
             .cli_overrides(self.cli_kv_overrides.clone())
             .harness_overrides(overrides)
+            .loader_overrides(self.loader_overrides.clone())
             .build()
             .await
             .wrap_err_with(|| format!("Failed to rebuild config for cwd {cwd_display}"))
@@ -193,7 +194,7 @@ impl App {
             (root_blocks_disable, profile_configured)
         };
         let mut permissions_history_label: Option<&'static str> = None;
-        let mut builder = ConfigEditsBuilder::new(&self.config.codex_home)
+        let mut builder = ConfigEditsBuilder::for_config(&self.config)
             .with_profile(self.active_profile.as_deref());
 
         for (feature, enabled) in updates {
@@ -432,7 +433,7 @@ impl App {
             },
         ];
 
-        if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+        if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
             .with_edits(edits)
             .apply()
             .await
@@ -542,6 +543,18 @@ impl App {
         self.chat_widget.set_tui_theme(Some(name));
     }
 
+    #[cfg(test)]
+    pub(super) fn sync_tui_pet_selection(&mut self, pet: String) {
+        self.config.tui_pet = Some(pet.clone());
+        self.chat_widget.set_tui_pet(Some(pet));
+    }
+
+    pub(super) fn sync_tui_pet_disabled(&mut self) {
+        let pet = crate::pets::DISABLED_PET_ID.to_string();
+        self.config.tui_pet = Some(pet.clone());
+        self.chat_widget.set_tui_pet(Some(pet));
+    }
+
     pub(super) fn restore_runtime_theme_from_config(&self) {
         if let Some(name) = self.config.tui_theme.as_deref()
             && let Some(theme) =
@@ -606,7 +619,7 @@ mod tests {
 
         assert_eq!(app_enabled_in_effective_config(&app.config, &app_id), None);
 
-        ConfigEditsBuilder::new(&app.config.codex_home)
+        ConfigEditsBuilder::for_config(&app.config)
             .with_edits([
                 ConfigEdit::SetPath {
                     segments: vec!["apps".to_string(), app_id.clone(), "enabled".to_string()],
@@ -760,21 +773,32 @@ terminal_resize_reflow_max_rows = 9000
         );
     }
 
-    #[test]
-    fn readonly_nix_store_config_persistence_errors_are_suppressed() {
-        let err = anyhow::anyhow!(
-            "failed to persist config.toml at /nix/store/example-hm_.codexconfig.toml: Read-only file system"
-        );
+    #[tokio::test]
+    async fn sync_tui_pet_selection_updates_chat_widget_config_copy() {
+        let mut app = make_test_app().await;
 
-        assert!(App::is_readonly_nix_store_config_persistence_error(&err));
+        app.sync_tui_pet_selection("chefito".to_string());
+
+        assert_eq!(app.config.tui_pet.as_deref(), Some("chefito"));
+        assert_eq!(
+            app.chat_widget.config_ref().tui_pet.as_deref(),
+            Some("chefito")
+        );
     }
 
-    #[test]
-    fn non_nix_store_config_persistence_errors_are_not_suppressed() {
-        let err = anyhow::anyhow!(
-            "failed to persist config.toml at /home/user/.codex/config.toml: Permission denied"
-        );
+    #[tokio::test]
+    async fn sync_tui_pet_disabled_updates_chat_widget_config_copy() {
+        let mut app = make_test_app().await;
 
-        assert!(!App::is_readonly_nix_store_config_persistence_error(&err));
+        app.sync_tui_pet_disabled();
+
+        assert_eq!(
+            app.config.tui_pet.as_deref(),
+            Some(crate::pets::DISABLED_PET_ID)
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().tui_pet.as_deref(),
+            Some(crate::pets::DISABLED_PET_ID)
+        );
     }
 }

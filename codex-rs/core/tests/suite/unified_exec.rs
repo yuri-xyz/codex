@@ -17,6 +17,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
+use core_test_support::managed_network_requirements_loader;
 use core_test_support::process::process_is_alive;
 use core_test_support::process::wait_for_pid_file;
 use core_test_support::process::wait_for_process_exit;
@@ -378,7 +379,7 @@ async fn unified_exec_emits_exec_command_begin_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
     let cwd = test.config.cwd.to_path_buf();
 
     let call_id = "uexec-begin-event";
@@ -437,7 +438,7 @@ async fn unified_exec_resolves_relative_workdir() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let workdir_rel = std::path::PathBuf::from("uexec_relative_workdir");
     let workdir = create_workspace_directory(&test, &workdir_rel).await?;
@@ -506,7 +507,7 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let workdir = create_workspace_directory(&test, "uexec_workdir_test").await?;
 
@@ -571,7 +572,7 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-end-event";
     let args = json!({
@@ -644,7 +645,7 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-delta-1";
     let args = json!({
@@ -702,7 +703,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-full-lifecycle";
     // This timing force the long-standing PTY
@@ -872,13 +873,7 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
 async fn unified_exec_network_denial_test(
     server: &wiremock::MockServer,
 ) -> Result<(TestCodex, SandboxPolicy)> {
-    use codex_config::ConfigLayerStack;
-    use codex_config::ConfigLayerStackOrdering;
     use codex_config::Constrained;
-    use codex_config::NetworkConstraints;
-    use codex_config::NetworkRequirementsToml;
-    use codex_config::RequirementSource;
-    use codex_config::Sourced;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -901,47 +896,21 @@ allow_local_binding = true
         *network_access = true;
     }
     let sandbox_policy_for_config = sandbox_policy.clone();
-    let mut builder = test_codex().with_home(home).with_config(move |config| {
-        config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("test config should allow feature update");
-        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
-        config.permissions.permission_profile = Constrained::allow_any(
-            PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy_for_config),
-        );
-        let layers = config
-            .config_layer_stack
-            .get_layers(
-                ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ true,
-            )
-            .into_iter()
-            .cloned()
-            .collect();
-        let mut requirements = config.config_layer_stack.requirements().clone();
-        requirements.network = Some(Sourced::new(
-            NetworkConstraints {
-                enabled: Some(true),
-                allow_local_binding: Some(true),
-                ..Default::default()
-            },
-            RequirementSource::CloudRequirements,
-        ));
-        let mut requirements_toml = config.config_layer_stack.requirements_toml().clone();
-        requirements_toml.network = Some(NetworkRequirementsToml {
-            enabled: Some(true),
-            allow_local_binding: Some(true),
-            ..Default::default()
+    let mut builder = test_codex()
+        .with_home(home)
+        .with_cloud_requirements(managed_network_requirements_loader())
+        .with_config(move |config| {
+            config.use_experimental_unified_exec_tool = true;
+            config
+                .features
+                .enable(Feature::UnifiedExec)
+                .expect("test config should allow feature update");
+            config.permissions.approval_policy = Constrained::allow_any(AskForApproval::Never);
+            config.permissions.permission_profile = Constrained::allow_any(
+                PermissionProfile::from_legacy_sandbox_policy(&sandbox_policy_for_config),
+            );
         });
-        config.config_layer_stack =
-            match ConfigLayerStack::new(layers, requirements, requirements_toml) {
-                Ok(stack) => stack,
-                Err(err) => panic!("rebuild config layer stack with network requirements: {err}"),
-            };
-    });
-    let test = builder.build_remote_aware(server).await?;
+    let test = builder.build_with_remote_env(server).await?;
     assert!(
         test.config.permissions.network.is_some(),
         "expected managed network proxy config to be present"
@@ -1022,7 +991,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-open";
     let open_args = json!({
@@ -1105,7 +1074,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-delayed-open";
     let open_args = json!({
@@ -1284,7 +1253,7 @@ async fn unified_exec_emits_one_begin_and_one_end_event() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let open_call_id = "uexec-open-session";
     let open_args = json!({
@@ -1398,7 +1367,7 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-metadata";
     let args = serde_json::json!({
@@ -1493,7 +1462,7 @@ async fn exec_command_clamps_model_requested_max_output_tokens_to_policy() -> Re
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-clamped-max-output";
     let args = serde_json::json!({
@@ -1555,7 +1524,7 @@ async fn write_stdin_clamps_model_requested_max_output_tokens_to_policy() -> Res
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-stdin-clamp-start";
     let start_args = serde_json::json!({
@@ -1642,7 +1611,7 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-default-pipe";
     let args = serde_json::json!({
@@ -1711,7 +1680,7 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-tty-enabled";
     let args = serde_json::json!({
@@ -1777,7 +1746,7 @@ async fn unified_exec_respects_early_exit_notifications() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec-early-exit";
     let args = serde_json::json!({
@@ -1860,7 +1829,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-cat-start";
     let send_call_id = "uexec-cat-send";
@@ -2014,7 +1983,7 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let start_call_id = "uexec-end-on-exit-start";
     let start_args = serde_json::json!({
@@ -2297,7 +2266,7 @@ async fn unified_exec_reuses_session_via_stdin() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let first_call_id = "uexec-start";
     let first_args = serde_json::json!({
@@ -2396,7 +2365,7 @@ async fn unified_exec_streams_after_lagged_output() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let script = r#"python3 - <<'PY'
 import sys
@@ -2516,7 +2485,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let first_call_id = "uexec-timeout";
     let first_args = serde_json::json!({
@@ -2605,7 +2574,7 @@ async fn unified_exec_formats_large_output_summary() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let script = r#"python3 - <<'PY'
 import sys
@@ -3033,7 +3002,7 @@ async fn unified_exec_runs_on_all_platforms() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     let call_id = "uexec";
     let args = serde_json::json!({
@@ -3097,7 +3066,7 @@ async fn unified_exec_prunes_exited_sessions_first() -> Result<()> {
             .enable(Feature::UnifiedExec)
             .expect("test config should allow feature update");
     });
-    let test = builder.build_remote_aware(&server).await?;
+    let test = builder.build_with_remote_env(&server).await?;
 
     const MAX_SESSIONS_FOR_TEST: i32 = 64;
     const FILLER_SESSIONS: i32 = MAX_SESSIONS_FOR_TEST - 1;

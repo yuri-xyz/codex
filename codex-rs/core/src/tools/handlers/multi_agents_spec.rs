@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 
 const SPAWN_AGENT_INHERITED_MODEL_GUIDANCE: &str = "Spawned agents inherit your current model by default. Omit `model` to use that preferred default; set `model` only when an explicit override is needed.";
 const SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION: &str = "Optional model override for the new agent. Leave unset to inherit the same model as the parent, which is the preferred default. Only set this when the user explicitly asks for a different model or the task clearly requires one.";
+const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str = "Optional service tier override for the new agent. Leave unset unless the user explicitly asks for one.";
 
-#[derive(Debug, Clone)]
-pub struct SpawnAgentToolOptions<'a> {
-    pub available_models: &'a [ModelPreset],
+#[derive(Debug, Clone, Default)]
+pub struct SpawnAgentToolOptions {
+    pub available_models: Vec<ModelPreset>,
     pub agent_type_description: String,
     pub hide_agent_type_model_reasoning: bool,
     pub include_usage_hint: bool,
@@ -26,9 +27,19 @@ pub struct WaitAgentTimeoutOptions {
     pub max_timeout_ms: i64,
 }
 
-pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions<'_>) -> ToolSpec {
+impl Default for WaitAgentTimeoutOptions {
+    fn default() -> Self {
+        Self {
+            default_timeout_ms: super::multi_agents_common::DEFAULT_WAIT_TIMEOUT_MS,
+            min_timeout_ms: super::multi_agents_common::MIN_WAIT_TIMEOUT_MS,
+            max_timeout_ms: super::multi_agents_common::MAX_WAIT_TIMEOUT_MS,
+        }
+    }
+}
+
+pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions) -> ToolSpec {
     let available_models_description = (!options.hide_agent_type_model_reasoning)
-        .then(|| spawn_agent_models_description(options.available_models));
+        .then(|| spawn_agent_models_description(&options.available_models));
     let return_value_description =
         "Returns the spawned agent id plus the user-facing nickname when available.";
     let mut properties = spawn_agent_common_properties_v1(&options.agent_type_description);
@@ -51,9 +62,9 @@ pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions<'_>) -> ToolSpe
     })
 }
 
-pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions<'_>) -> ToolSpec {
+pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
     let available_models_description = (!options.hide_agent_type_model_reasoning)
-        .then(|| spawn_agent_models_description(options.available_models));
+        .then(|| spawn_agent_models_description(&options.available_models));
     let mut properties = spawn_agent_common_properties_v2(&options.agent_type_description);
     if options.hide_agent_type_model_reasoning {
         hide_spawn_agent_metadata_options(&mut properties);
@@ -535,6 +546,12 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
                     .to_string(),
             )),
         ),
+        (
+            "service_tier".to_string(),
+            JsonSchema::string(Some(
+                SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION.to_string(),
+            )),
+        ),
     ])
 }
 
@@ -568,6 +585,12 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
                     .to_string(),
             )),
         ),
+        (
+            "service_tier".to_string(),
+            JsonSchema::string(Some(
+                SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION.to_string(),
+            )),
+        ),
     ])
 }
 
@@ -575,6 +598,7 @@ fn hide_spawn_agent_metadata_options(properties: &mut BTreeMap<String, JsonSchem
     properties.remove("agent_type");
     properties.remove("model");
     properties.remove("reasoning_effort");
+    properties.remove("service_tier");
 }
 
 fn spawn_agent_tool_description(
@@ -702,13 +726,24 @@ fn spawn_agent_models_description(models: &[ModelPreset]) -> String {
                 .map(|preset| format!("{} ({})", preset.effort, preset.description))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let service_tiers = if model.service_tiers.is_empty() {
+                "none".to_string()
+            } else {
+                model
+                    .service_tiers
+                    .iter()
+                    .map(|tier| format!("{} ({}: {})", tier.id, tier.name, tier.description))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             format!(
-                "- {} (`{}`): {} Default reasoning effort: {}. Supported reasoning efforts: {}.",
+                "- {} (`{}`): {} Default reasoning effort: {}. Supported reasoning efforts: {}. Supported service tiers: {}.",
                 model.display_name,
                 model.model,
                 model.description,
                 model.default_reasoning_effort,
-                efforts
+                efforts,
+                service_tiers
             )
         })
         .collect::<Vec<_>>()

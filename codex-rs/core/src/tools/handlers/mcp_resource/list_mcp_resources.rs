@@ -4,11 +4,13 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::mcp_resource_spec::create_list_mcp_resources_tool;
+use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use crate::tools::registry::ToolKind;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::McpInvocation;
 use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 
 use rmcp::model::PaginatedRequestParams;
 
@@ -24,15 +26,20 @@ use super::serialize_function_output;
 
 pub struct ListMcpResourcesHandler;
 
-impl ToolHandler for ListMcpResourcesHandler {
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for ListMcpResourcesHandler {
     type Output = FunctionToolOutput;
 
     fn tool_name(&self) -> ToolName {
         ToolName::plain("list_mcp_resources")
     }
 
-    fn kind(&self) -> ToolKind {
-        ToolKind::Function
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_list_mcp_resources_tool())
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
     }
 
     #[expect(
@@ -156,3 +163,5 @@ impl ToolHandler for ListMcpResourcesHandler {
         }
     }
 }
+
+impl ToolHandler for ListMcpResourcesHandler {}

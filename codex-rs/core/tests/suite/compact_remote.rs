@@ -357,11 +357,11 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
         Some("Bearer Access Token")
     );
     assert_eq!(
-        compact_request.header("session_id").as_deref(),
+        compact_request.header("session-id").as_deref(),
         Some(session_id.as_str())
     );
     assert_eq!(
-        compact_request.header("thread_id").as_deref(),
+        compact_request.header("thread-id").as_deref(),
         Some(thread_id.as_str())
     );
     let compact_body = compact_request.body_json();
@@ -479,10 +479,9 @@ async fn assert_remote_manual_compact_request_parity(
                 responses::ev_completed("turn-three-final-response"),
             ]),
             responses::sse(vec![
-                responses::ev_local_shell_call(
-                    "turn-four-local-shell",
-                    "completed",
-                    vec!["/bin/echo", "TURN_FOUR_LOCAL_SHELL"],
+                responses::ev_shell_command_call(
+                    "turn-four-shell-command",
+                    "echo TURN_FOUR_LOCAL_SHELL",
                 ),
                 responses::ev_completed("turn-four-local-shell-response"),
             ]),
@@ -589,7 +588,7 @@ async fn assert_remote_manual_compact_request_parity(
     assert_eq!(
         response_requests.len(),
         7,
-        "expected five turns with one unsupported tool continuation and one local shell continuation"
+        "expected five turns with one unsupported tool continuation and one shell command continuation"
     );
     assert_eq!(
         compact_mock.requests().len(),
@@ -664,15 +663,16 @@ async fn assert_remote_manual_compact_request_parity(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_manual_compact_api_auth_reuses_prompt_cache_key() -> Result<()> {
+async fn remote_manual_compact_api_auth_omits_service_tier_and_reuses_prompt_cache_key()
+-> Result<()> {
     skip_if_no_network!(Ok(()));
 
     assert_remote_manual_compact_request_parity(
         CodexAuth::from_api_key("dummy"),
         Some(ServiceTier::Fast),
-        Some("priority"),
+        /*expected_service_tier*/ None,
         "remote_manual_compact_api_auth_prompt_cache_key_request_diff",
-        "After five varied API-key-auth turns, remote manual compaction reuses the normal responses service_tier and prompt_cache_key while omitting responses-only fields.",
+        "After five varied API-key-auth turns, remote manual compaction omits service_tier, reuses prompt_cache_key, and still omits responses-only fields.",
     )
     .await?;
 
@@ -689,7 +689,7 @@ async fn remote_manual_compact_chatgpt_auth_reuses_service_tier_and_prompt_cache
         Some(ServiceTier::Fast),
         Some("priority"),
         "remote_manual_compact_chatgpt_auth_service_tier_prompt_cache_key_request_diff",
-        "After five varied ChatGPT-auth turns, remote manual compaction reuses the normal responses service_tier and prompt_cache_key while omitting responses-only fields.",
+        "After five varied ChatGPT-auth turns, remote manual compaction reuses service_tier and prompt_cache_key while omitting responses-only fields.",
     )
     .await?;
 
@@ -1045,12 +1045,12 @@ async fn remote_compact_runs_automatically() -> Result<()> {
     assert_eq!(
         compact_mock
             .single_request()
-            .header("session_id")
+            .header("session-id")
             .as_deref(),
         Some(session_id.as_str())
     );
     assert_eq!(
-        compact_mock.single_request().header("thread_id").as_deref(),
+        compact_mock.single_request().header("thread-id").as_deref(),
         Some(thread_id.as_str())
     );
     let follow_up_request = responses_mock.single_request();

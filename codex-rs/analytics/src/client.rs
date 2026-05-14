@@ -1,6 +1,8 @@
 use crate::events::AppServerRpcTransport;
 use crate::events::GuardianReviewAnalyticsResult;
 use crate::events::GuardianReviewTrackContext;
+#[cfg(test)]
+use crate::events::TrackEventRequest;
 use crate::facts::AnalyticsFact;
 use crate::facts::AnalyticsJsonRpcError;
 use crate::facts::AppInvocation;
@@ -20,6 +22,7 @@ use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerResponse;
 use codex_login::AuthManager;
 use codex_plugin::PluginTelemetryMetadata;
+use codex_protocol::request_permissions::RequestPermissionsResponse;
 #[cfg(test)]
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -120,6 +123,7 @@ impl AnalyticsEventsClient {
         &self,
         _tracking: &GuardianReviewTrackContext,
         _result: GuardianReviewAnalyticsResult,
+        _completed_at_ms: u64,
     ) {
     }
 
@@ -220,7 +224,41 @@ impl AnalyticsEventsClient {
 
     pub fn track_server_request(&self, _connection_id: u64, _request: ServerRequest) {}
 
-    pub fn track_server_response(&self, _response: ServerResponse) {}
+    pub fn track_server_response(&self, _completed_at_ms: u64, _response: ServerResponse) {}
+
+    pub fn track_effective_permissions_approval_response(
+        &self,
+        _completed_at_ms: u64,
+        _request_id: RequestId,
+        _response: RequestPermissionsResponse,
+    ) {
+    }
+
+    pub fn track_server_request_aborted(&self, _completed_at_ms: u64, _request_id: RequestId) {}
+}
+
+#[cfg(test)]
+fn track_event_request_batches(events: Vec<TrackEventRequest>) -> Vec<Vec<TrackEventRequest>> {
+    let mut batches = Vec::new();
+    let mut current_batch = Vec::new();
+
+    for event in events {
+        if event.should_send_in_isolated_request() {
+            if !current_batch.is_empty() {
+                batches.push(current_batch);
+                current_batch = Vec::new();
+            }
+            batches.push(vec![event]);
+        } else {
+            current_batch.push(event);
+        }
+    }
+
+    if !current_batch.is_empty() {
+        batches.push(current_batch);
+    }
+
+    batches
 }
 
 #[cfg(test)]

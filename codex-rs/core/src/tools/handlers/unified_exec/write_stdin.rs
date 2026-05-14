@@ -4,14 +4,16 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::PostToolUsePayload;
+use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolHandler;
-use crate::tools::registry::ToolKind;
 use crate::unified_exec::WriteStdinRequest;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 use serde::Deserialize;
 
+use super::super::shell_spec::create_write_stdin_tool;
 use super::effective_max_output_tokens;
 use super::post_unified_exec_tool_use_payload;
 
@@ -29,31 +31,16 @@ struct WriteStdinArgs {
 
 pub struct WriteStdinHandler;
 
-impl ToolHandler for WriteStdinHandler {
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     type Output = ExecCommandToolOutput;
 
     fn tool_name(&self) -> ToolName {
         ToolName::plain("write_stdin")
     }
 
-    fn kind(&self) -> ToolKind {
-        ToolKind::Function
-    }
-
-    fn matches_kind(&self, payload: &ToolPayload) -> bool {
-        matches!(payload, ToolPayload::Function { .. })
-    }
-
-    async fn is_mutating(&self, _invocation: &ToolInvocation) -> bool {
-        true
-    }
-
-    fn post_tool_use_payload(
-        &self,
-        invocation: &ToolInvocation,
-        result: &Self::Output,
-    ) -> Option<PostToolUsePayload> {
-        post_unified_exec_tool_use_payload(invocation, result)
+    fn spec(&self) -> Option<ToolSpec> {
+        Some(create_write_stdin_tool())
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
@@ -100,5 +87,19 @@ impl ToolHandler for WriteStdinHandler {
             .await;
 
         Ok(response)
+    }
+}
+
+impl ToolHandler for WriteStdinHandler {
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
+    }
+
+    fn post_tool_use_payload(
+        &self,
+        invocation: &ToolInvocation,
+        result: &Self::Output,
+    ) -> Option<PostToolUsePayload> {
+        post_unified_exec_tool_use_payload(invocation, result)
     }
 }
