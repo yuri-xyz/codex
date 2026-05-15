@@ -32,9 +32,9 @@ impl ThreadGoalRequestProcessor {
         request_id: ConnectionRequestId,
         params: ThreadGoalSetParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_goal_set_inner(request_id, params)
+        self.thread_goal_set_inner(Some(request_id), params)
             .await
-            .map(|()| None)
+            .map(|_| None)
     }
 
     pub(crate) async fn thread_goal_get(
@@ -51,9 +51,63 @@ impl ThreadGoalRequestProcessor {
         request_id: ConnectionRequestId,
         params: ThreadGoalClearParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_goal_clear_inner(request_id, params)
+        self.thread_goal_clear_inner(Some(request_id), params)
             .await
-            .map(|()| None)
+            .map(|_| None)
+    }
+
+    pub(crate) async fn replace_thread_goal_from_slash_command(
+        &self,
+        thread_id: ThreadId,
+        objective: String,
+    ) -> Result<ThreadGoalSetResponse, JSONRPCErrorError> {
+        self.thread_goal_clear_inner(
+            /*request_id*/ None,
+            ThreadGoalClearParams {
+                thread_id: thread_id.to_string(),
+            },
+        )
+        .await?;
+        self.thread_goal_set_inner(
+            /*request_id*/ None,
+            ThreadGoalSetParams {
+                thread_id: thread_id.to_string(),
+                objective: Some(objective),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn set_thread_goal_status_from_slash_command(
+        &self,
+        thread_id: ThreadId,
+        status: ThreadGoalStatus,
+    ) -> Result<ThreadGoalSetResponse, JSONRPCErrorError> {
+        self.thread_goal_set_inner(
+            /*request_id*/ None,
+            ThreadGoalSetParams {
+                thread_id: thread_id.to_string(),
+                objective: None,
+                status: Some(status),
+                token_budget: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn clear_thread_goal_from_slash_command(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<ThreadGoalClearResponse, JSONRPCErrorError> {
+        self.thread_goal_clear_inner(
+            /*request_id*/ None,
+            ThreadGoalClearParams {
+                thread_id: thread_id.to_string(),
+            },
+        )
+        .await
     }
 
     pub(crate) async fn emit_resume_goal_snapshot_and_continue(
@@ -91,9 +145,9 @@ impl ThreadGoalRequestProcessor {
 
     async fn thread_goal_set_inner(
         &self,
-        request_id: ConnectionRequestId,
+        request_id: Option<ConnectionRequestId>,
         params: ThreadGoalSetParams,
-    ) -> Result<(), JSONRPCErrorError> {
+    ) -> Result<ThreadGoalSetResponse, JSONRPCErrorError> {
         if !self.config.features.enabled(Feature::Goals) {
             return Err(invalid_request("goals feature is disabled"));
         }
@@ -221,18 +275,18 @@ impl ThreadGoalRequestProcessor {
             previous_status,
         };
         let goal = api_thread_goal_from_state(goal);
-        self.outgoing
-            .send_response(
-                request_id.clone(),
-                ThreadGoalSetResponse { goal: goal.clone() },
-            )
-            .await;
+        let response = ThreadGoalSetResponse { goal: goal.clone() };
+        if let Some(request_id) = request_id {
+            self.outgoing
+                .send_response(request_id, response.clone())
+                .await;
+        }
         self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
         if let Some(thread) = running_thread.as_ref() {
             thread.apply_external_goal_set(external_goal_set).await;
         }
-        Ok(())
+        Ok(response)
     }
 
     async fn thread_goal_get_inner(
@@ -255,9 +309,9 @@ impl ThreadGoalRequestProcessor {
 
     async fn thread_goal_clear_inner(
         &self,
-        request_id: ConnectionRequestId,
+        request_id: Option<ConnectionRequestId>,
         params: ThreadGoalClearParams,
-    ) -> Result<(), JSONRPCErrorError> {
+    ) -> Result<ThreadGoalClearResponse, JSONRPCErrorError> {
         if !self.config.features.enabled(Feature::Goals) {
             return Err(invalid_request("goals feature is disabled"));
         }
@@ -311,14 +365,17 @@ impl ThreadGoalRequestProcessor {
             thread.apply_external_goal_clear().await;
         }
 
-        self.outgoing
-            .send_response(request_id, ThreadGoalClearResponse { cleared })
-            .await;
+        let response = ThreadGoalClearResponse { cleared };
+        if let Some(request_id) = request_id {
+            self.outgoing
+                .send_response(request_id, response.clone())
+                .await;
+        }
         if cleared {
             self.emit_thread_goal_cleared_ordered(thread_id, listener_command_tx)
                 .await;
         }
-        Ok(())
+        Ok(response)
     }
 
     async fn state_db_for_materialized_thread(

@@ -680,7 +680,7 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::SetThreadGoalObjective {
                     thread_id,
                     objective: objective.to_string(),
-                    mode: ThreadGoalSetMode::ConfirmIfExists,
+                    mode: ThreadGoalSetMode::ReplaceExisting,
                 });
                 self.append_message_history_entry(format!("/goal {trimmed}"));
                 if source == SlashCommandDispatchSource::Live {

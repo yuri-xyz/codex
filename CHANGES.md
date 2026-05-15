@@ -57,3 +57,6 @@ git log --author="yuri-xyz" --oneline
 - Added configurable TUI status-line items for 5-hour and weekly usage-limit reset times.
 - Re-aligned the core test suite with fork-specific trust, deterministic compaction, shell snapshot, and agent-resume behavior after an upstream merge.
 - Synced the fork with upstream app-server, TUI, analytics, and telemetry refactors while preserving local privacy stubs, hidden feedback/plan surfaces, composer draft stashing, status-line reset times, and trust-prompt removal.
+- Allowed app-server remote control to run from the current fork binary when the upstream standalone managed install is absent, disabling daemon auto-update in that fallback mode.
+- Set the local fork build version to `0.129.0-alpha.6` so ChatGPT remote-control clients no longer reject fork-built app-server processes as outdated development builds.
+- Let mobile/app-server text submissions use `/go` or `/goal` to manage long-running goals, and made new goal objectives replace existing goals without an extra confirmation prompt.

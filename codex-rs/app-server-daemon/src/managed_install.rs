@@ -25,6 +25,11 @@ pub(crate) fn managed_codex_bin(codex_home: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
+pub(crate) fn current_codex_bin() -> Result<PathBuf> {
+    std::env::current_exe().context("failed to resolve current Codex executable")
+}
+
+#[cfg(unix)]
 pub(crate) async fn resolved_managed_codex_bin(codex_bin: &Path) -> Result<PathBuf> {
     fs::canonicalize(codex_bin).await.with_context(|| {
         format!(

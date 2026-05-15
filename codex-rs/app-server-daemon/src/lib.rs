@@ -15,6 +15,8 @@ pub use backend::BackendKind;
 use backend::BackendPaths;
 use codex_app_server_transport::app_server_control_socket_path;
 use codex_utils_home_dir::find_codex_home;
+#[cfg(unix)]
+use managed_install::current_codex_bin;
 use managed_install::managed_codex_bin;
 #[cfg(unix)]
 use managed_install::managed_codex_version;
@@ -266,7 +268,6 @@ impl Daemon {
             ));
         }
 
-        self.ensure_managed_codex_bin()?;
         let pid = self.start_managed_backend(&settings).await?;
         let info = self.wait_until_ready().await?;
         Ok(self.output(
@@ -287,7 +288,6 @@ impl Daemon {
             ));
         }
 
-        self.ensure_managed_codex_bin()?;
         if let Some(backend) = self.running_backend_instance(&settings).await? {
             backend.stop().await?;
         }
@@ -468,7 +468,6 @@ impl Daemon {
         settings.save(&self.settings_file).await?;
 
         let app_server_version = if let Some(backend) = backend {
-            self.ensure_managed_codex_bin()?;
             backend.stop().await?;
             let _ = self.start_managed_backend(&settings).await?;
             Some(self.wait_until_ready().await?.app_server_version)
@@ -485,7 +484,8 @@ impl Daemon {
     }
 
     async fn bootstrap_locked(&self, options: BootstrapOptions) -> Result<BootstrapOutput> {
-        self.ensure_managed_codex_bin()?;
+        let codex_bin = self.launch_codex_bin()?;
+        let auto_update_enabled = self.managed_codex_bin.is_file();
 
         let settings = DaemonSettings {
             remote_control_enabled: options.remote_control_enabled,
@@ -503,21 +503,23 @@ impl Daemon {
             backend.stop().await?;
         }
 
-        let backend = backend::pid_backend(self.backend_paths(&settings));
+        let backend = backend::pid_backend(self.backend_paths_with_bin(&settings, &codex_bin));
         backend.start().await?;
-        let updater = backend::pid_update_loop_backend(self.backend_paths(&settings));
-        if updater.is_starting_or_running().await? {
-            updater.stop().await?;
+        if auto_update_enabled {
+            let updater = backend::pid_update_loop_backend(self.backend_paths(&settings));
+            if updater.is_starting_or_running().await? {
+                updater.stop().await?;
+            }
+            updater.start().await?;
         }
-        updater.start().await?;
 
         let info = self.wait_until_ready().await?;
         Ok(BootstrapOutput {
             status: BootstrapStatus::Bootstrapped,
             backend: BackendKind::Pid,
-            auto_update_enabled: true,
+            auto_update_enabled,
             remote_control_enabled: settings.remote_control_enabled,
-            managed_codex_path: self.managed_codex_bin.clone(),
+            managed_codex_path: codex_bin,
             socket_path: self.socket_path.clone(),
             cli_version: env!("CARGO_PKG_VERSION").to_string(),
             app_server_version: info.app_server_version,
@@ -543,7 +545,8 @@ impl Daemon {
     }
 
     async fn start_managed_backend(&self, settings: &DaemonSettings) -> Result<Option<u32>> {
-        self.start_managed_backend_with_bin(settings, &self.managed_codex_bin)
+        let codex_bin = self.launch_codex_bin()?;
+        self.start_managed_backend_with_bin(settings, &codex_bin)
             .await
     }
 
@@ -559,22 +562,24 @@ impl Daemon {
 
     async fn is_bootstrapped(&self, settings: &DaemonSettings) -> Result<bool> {
         let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
-        updater.is_starting_or_running().await
+        if updater.is_starting_or_running().await? {
+            return Ok(true);
+        }
+        Ok(!self.managed_codex_bin.is_file() && self.settings_file.is_file())
     }
 
-    fn ensure_managed_codex_bin(&self) -> Result<()> {
+    #[cfg(unix)]
+    fn launch_codex_bin(&self) -> Result<PathBuf> {
         if self.managed_codex_bin.is_file() {
-            return Ok(());
+            return Ok(self.managed_codex_bin.clone());
         }
 
-        let managed_codex_path = self.managed_codex_bin.display();
-        Err(anyhow!(
-            "managed standalone Codex install not found at {managed_codex_path}\n\n\
-             This command requires the standalone install managed by the Codex installer, because \
-             the daemon starts and updates app-server from that fixed path.\n\n\
-             Install it with:\n  curl -fsSL https://chatgpt.com/codex/install.sh | sh\n\n\
-             Then rerun the command you just tried."
-        ))
+        current_codex_bin()
+    }
+
+    #[cfg(not(unix))]
+    fn launch_codex_bin(&self) -> Result<PathBuf> {
+        Ok(self.managed_codex_bin.clone())
     }
 
     fn backend_paths(&self, settings: &DaemonSettings) -> BackendPaths {
@@ -739,6 +744,7 @@ mod tests {
     use super::BackendKind;
     use super::BootstrapOutput;
     use super::BootstrapStatus;
+    use super::Daemon;
     use super::LifecycleOutput;
     use super::LifecycleStatus;
     use super::RemoteControlStartOutput;
@@ -750,6 +756,7 @@ mod tests {
     use super::restart_decision;
     use super::should_reexec_updater;
     use crate::client::ProbeInfo;
+    use tempfile::TempDir;
 
     #[test]
     fn lifecycle_status_uses_camel_case_json() {
@@ -873,6 +880,34 @@ mod tests {
         assert_eq!(
             serde_json::to_value(output).expect("serialize"),
             serde_json::to_value(bootstrap_output).expect("serialize")
+        );
+    }
+
+    #[test]
+    fn launch_codex_bin_prefers_managed_install_and_falls_back_to_current_exe() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let managed_codex_bin = temp_dir.path().join("managed").join("codex");
+        let daemon = Daemon {
+            socket_path: temp_dir.path().join("codex.sock"),
+            pid_file: temp_dir.path().join("app-server.pid"),
+            update_pid_file: temp_dir.path().join("app-server-updater.pid"),
+            operation_lock_file: temp_dir.path().join("daemon.lock"),
+            settings_file: temp_dir.path().join("settings.json"),
+            managed_codex_bin: managed_codex_bin.clone(),
+        };
+
+        assert_eq!(
+            daemon.launch_codex_bin().expect("fallback current exe"),
+            std::env::current_exe().expect("current exe")
+        );
+
+        std::fs::create_dir_all(managed_codex_bin.parent().expect("managed parent"))
+            .expect("create managed parent");
+        std::fs::write(&managed_codex_bin, "").expect("write managed binary placeholder");
+
+        assert_eq!(
+            daemon.launch_codex_bin().expect("managed exe"),
+            managed_codex_bin
         );
     }
 }

@@ -1,11 +1,6 @@
 use super::App;
-use crate::app_event::AppEvent;
 use crate::app_event::ThreadGoalSetMode;
 use crate::app_server_session::AppServerSession;
-use crate::bottom_pane::SelectionAction;
-use crate::bottom_pane::SelectionItem;
-use crate::bottom_pane::SelectionViewParams;
-use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
 use codex_app_server_protocol::ThreadGoalStatus;
@@ -108,26 +103,6 @@ impl App {
         objective: String,
         mode: ThreadGoalSetMode,
     ) {
-        if matches!(mode, ThreadGoalSetMode::ConfirmIfExists) {
-            let result = app_server.thread_goal_get(thread_id).await;
-            if self.current_displayed_thread_id() != Some(thread_id) {
-                return;
-            }
-
-            match result {
-                Ok(response) if response.goal.is_some() => {
-                    self.show_replace_thread_goal_confirmation(thread_id, objective);
-                    return;
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    self.chat_widget
-                        .add_error_message(format!("Failed to read thread goal: {err}"));
-                    return;
-                }
-            }
-        }
-
         let replacing_goal = matches!(mode, ThreadGoalSetMode::ReplaceExisting);
         if replacing_goal {
             let result = app_server.thread_goal_clear(thread_id).await;
@@ -143,9 +118,7 @@ impl App {
         }
 
         let (status, token_budget) = match mode {
-            ThreadGoalSetMode::ConfirmIfExists | ThreadGoalSetMode::ReplaceExisting => {
-                (ThreadGoalStatus::Active, None)
-            }
+            ThreadGoalSetMode::ReplaceExisting => (ThreadGoalStatus::Active, None),
             ThreadGoalSetMode::UpdateExisting {
                 status,
                 token_budget,
@@ -227,39 +200,6 @@ impl App {
                 .chat_widget
                 .add_error_message(format!("Failed to clear thread goal: {err}")),
         }
-    }
-
-    fn show_replace_thread_goal_confirmation(&mut self, thread_id: ThreadId, objective: String) {
-        let replace_objective = objective.clone();
-        let replace_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::SetThreadGoalObjective {
-                thread_id,
-                objective: replace_objective.clone(),
-                mode: ThreadGoalSetMode::ReplaceExisting,
-            });
-        })];
-        let items = vec![
-            SelectionItem {
-                name: "Replace current goal".to_string(),
-                description: Some("Set the new objective and start it now".to_string()),
-                actions: replace_actions,
-                dismiss_on_select: true,
-                ..Default::default()
-            },
-            SelectionItem {
-                name: "Cancel".to_string(),
-                description: Some("Keep the current goal".to_string()),
-                dismiss_on_select: true,
-                ..Default::default()
-            },
-        ];
-        self.chat_widget.show_selection_view(SelectionViewParams {
-            title: Some("Replace goal?".to_string()),
-            subtitle: Some(format!("New objective: {objective}")),
-            footer_hint: Some(standard_popup_hint_line()),
-            items,
-            ..Default::default()
-        });
     }
 
     fn show_no_thread_goal_to_edit(&mut self) {

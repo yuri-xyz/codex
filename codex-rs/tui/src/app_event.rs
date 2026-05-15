@@ -58,7 +58,6 @@ pub(crate) enum RealtimeAudioDeviceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThreadGoalSetMode {
-    ConfirmIfExists,
     ReplaceExisting,
     UpdateExisting {
         status: ThreadGoalStatus,

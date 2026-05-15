@@ -13,6 +13,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
+    thread_goal_processor: ThreadGoalRequestProcessor,
     skills_watcher: Arc<SkillsWatcher>,
 }
 
@@ -30,6 +31,7 @@ impl TurnRequestProcessor {
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
         thread_list_state_permit: Arc<Semaphore>,
+        thread_goal_processor: ThreadGoalRequestProcessor,
         skills_watcher: Arc<SkillsWatcher>,
     ) -> Self {
         Self {
@@ -44,6 +46,7 @@ impl TurnRequestProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            thread_goal_processor,
             skills_watcher,
         }
     }
@@ -312,6 +315,71 @@ impl TurnRequestProcessor {
         Ok(())
     }
 
+    fn parse_slash_goal_command(
+        input: &[V2UserInput],
+    ) -> Result<Option<SlashGoalCommand>, JSONRPCErrorError> {
+        let [V2UserInput::Text { text, .. }] = input else {
+            return Ok(None);
+        };
+        let Some((command, args)) = parse_slash_goal_command_parts(text) else {
+            return Ok(None);
+        };
+        if args.is_empty() {
+            return Err(invalid_request(format!(
+                "Usage: /{command} <objective|clear|pause|resume>"
+            )));
+        }
+        let parsed = match args.to_ascii_lowercase().as_str() {
+            "clear" => SlashGoalCommand::Clear,
+            "pause" => SlashGoalCommand::SetStatus(ThreadGoalStatus::Paused),
+            "resume" => SlashGoalCommand::SetStatus(ThreadGoalStatus::Active),
+            _ => SlashGoalCommand::ReplaceObjective(args.to_string()),
+        };
+        Ok(Some(parsed))
+    }
+
+    async fn handle_slash_goal_command(
+        &self,
+        request_id: &ConnectionRequestId,
+        thread_id: ThreadId,
+        command: SlashGoalCommand,
+    ) -> Result<TurnStartResponse, JSONRPCErrorError> {
+        match command {
+            SlashGoalCommand::ReplaceObjective(objective) => {
+                self.thread_goal_processor
+                    .replace_thread_goal_from_slash_command(thread_id, objective)
+                    .await?;
+            }
+            SlashGoalCommand::SetStatus(status) => {
+                self.thread_goal_processor
+                    .set_thread_goal_status_from_slash_command(thread_id, status)
+                    .await?;
+            }
+            SlashGoalCommand::Clear => {
+                self.thread_goal_processor
+                    .clear_thread_goal_from_slash_command(thread_id)
+                    .await?;
+            }
+        }
+
+        let turn_id = format!("slash-goal-{}", Uuid::new_v4());
+        self.outgoing
+            .record_request_turn_id(request_id, &turn_id)
+            .await;
+        Ok(TurnStartResponse {
+            turn: Turn {
+                id: turn_id,
+                items: Vec::new(),
+                items_view: TurnItemsView::NotLoaded,
+                error: None,
+                status: TurnStatus::Completed,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            },
+        })
+    }
+
     async fn turn_start_inner(
         &self,
         request_id: ConnectionRequestId,
@@ -342,6 +410,12 @@ impl TurnRequestProcessor {
         .inspect_err(|error| {
             self.track_error_response(&request_id, error, /*error_type*/ None);
         })?;
+
+        if let Some(command) = Self::parse_slash_goal_command(&params.input)? {
+            return self
+                .handle_slash_goal_command(&request_id, thread_id, command)
+                .await;
+        }
 
         let collaboration_mode = params
             .collaboration_mode
@@ -1110,6 +1184,29 @@ impl TurnRequestProcessor {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SlashGoalCommand {
+    ReplaceObjective(String),
+    SetStatus(ThreadGoalStatus),
+    Clear,
+}
+
+fn parse_slash_goal_command_parts(text: &str) -> Option<(&'static str, &str)> {
+    let trimmed_start = text.trim_start();
+    let command_end = trimmed_start
+        .find(char::is_whitespace)
+        .unwrap_or(trimmed_start.len());
+    let command = &trimmed_start[..command_end];
+    let args = trimmed_start[command_end..].trim();
+    if command.eq_ignore_ascii_case("/go") {
+        Some(("go", args))
+    } else if command.eq_ignore_ascii_case("/goal") {
+        Some(("goal", args))
+    } else {
+        None
+    }
+}
+
 fn xcode_26_4_mcp_elicitations_auto_deny(
     client_name: Option<&str>,
     client_version: Option<&str>,
@@ -1119,4 +1216,73 @@ fn xcode_26_4_mcp_elicitations_auto_deny(
     // TODO: Remove this compatibility hack once Xcode 26.4 ages out.
     client_name == Some("Xcode")
         && client_version.is_some_and(|version| version.starts_with("26.4"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn text_input(text: &str) -> Vec<V2UserInput> {
+        vec![V2UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]
+    }
+
+    #[test]
+    fn parse_slash_goal_command_accepts_goal_and_go_aliases() {
+        assert_eq!(
+            TurnRequestProcessor::parse_slash_goal_command(&text_input(
+                "/goal improve benchmark coverage"
+            ))
+            .expect("valid /goal command"),
+            Some(SlashGoalCommand::ReplaceObjective(
+                "improve benchmark coverage".to_string()
+            ))
+        );
+        assert_eq!(
+            TurnRequestProcessor::parse_slash_goal_command(&text_input("/go resume"))
+                .expect("valid /go command"),
+            Some(SlashGoalCommand::SetStatus(ThreadGoalStatus::Active))
+        );
+        assert_eq!(
+            TurnRequestProcessor::parse_slash_goal_command(&text_input("/GO clear"))
+                .expect("valid uppercase /go command"),
+            Some(SlashGoalCommand::Clear)
+        );
+    }
+
+    #[test]
+    fn parse_slash_goal_command_ignores_other_input() {
+        assert_eq!(
+            TurnRequestProcessor::parse_slash_goal_command(&text_input("/gone fishing"))
+                .expect("unrelated slash command should not fail"),
+            None
+        );
+        assert_eq!(
+            TurnRequestProcessor::parse_slash_goal_command(&[
+                V2UserInput::Text {
+                    text: "/go improve benchmark coverage".to_string(),
+                    text_elements: Vec::new(),
+                },
+                V2UserInput::Image {
+                    url: "https://example.com/image.png".to_string(),
+                },
+            ])
+            .expect("multi-item input should not fail"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_slash_goal_command_rejects_bare_goal_command() {
+        let error = TurnRequestProcessor::parse_slash_goal_command(&text_input("/goal"))
+            .expect_err("bare /goal command should be invalid");
+
+        assert!(
+            error.message.contains("Usage: /goal"),
+            "unexpected error: {error:?}"
+        );
+    }
 }

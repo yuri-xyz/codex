@@ -428,6 +428,7 @@ impl MessageProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            thread_goal_processor.clone(),
             Arc::clone(&skills_watcher),
         );
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
