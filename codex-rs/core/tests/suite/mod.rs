@@ -49,6 +49,8 @@ mod compact;
 #[cfg(any())]
 mod compact_remote;
 #[cfg(any())]
+mod compact_remote_parity;
+#[cfg(any())]
 mod compact_resume_fork;
 mod deprecation_notice;
 mod exec;
@@ -63,6 +65,7 @@ mod image_rollout;
 mod items;
 mod json_result;
 mod live_cli;
+mod mcp_turn_metadata;
 mod model_overrides;
 mod model_switching;
 mod model_visible_layout;

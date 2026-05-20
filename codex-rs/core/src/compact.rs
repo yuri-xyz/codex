@@ -391,6 +391,7 @@ fn render_compaction_event(
         }
         ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }
+        | ResponseItem::CompactionTrigger
         | ResponseItem::Other
         | ResponseItem::Message { .. } => None,
     }?;

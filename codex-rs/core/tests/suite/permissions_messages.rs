@@ -58,6 +58,7 @@ async fn permissions_message_sent_once_on_start() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -97,26 +98,19 @@ async fn permissions_message_added_on_override_change() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    test.codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
-            model: None,
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     test.codex
         .submit(Op::UserInput {
@@ -127,6 +121,7 @@ async fn permissions_message_added_on_override_change() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -172,6 +167,7 @@ async fn permissions_message_not_added_when_no_change() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -185,6 +181,7 @@ async fn permissions_message_not_added_when_no_change() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -230,26 +227,19 @@ async fn permissions_message_omitted_when_disabled() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    test.codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
-            model: None,
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     test.codex
         .submit(Op::UserInput {
@@ -260,6 +250,7 @@ async fn permissions_message_omitted_when_disabled() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -319,27 +310,19 @@ async fn resume_replays_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    initial
-        .codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
+    core_test_support::submit_thread_settings(
+        &initial.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
-            model: None,
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     initial
         .codex
@@ -351,6 +334,7 @@ async fn resume_replays_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -366,6 +350,7 @@ async fn resume_replays_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -425,27 +410,19 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    initial
-        .codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
+    core_test_support::submit_thread_settings(
+        &initial.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
-            model: None,
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     initial
         .codex
@@ -457,6 +434,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -478,6 +456,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&resumed.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -513,6 +492,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -543,8 +523,9 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
     .await;
     let writable = TempDir::new()?;
     let writable_root = AbsolutePathBuf::try_from(writable.path())?;
+    let writable_root_for_config = writable_root.clone();
     let permission_profile = PermissionProfile::workspace_write_with(
-        &[writable_root],
+        std::slice::from_ref(&writable_root),
         NetworkSandboxPolicy::Restricted,
         /*exclude_tmpdir_env_var*/ false,
         /*exclude_slash_tmp*/ false,
@@ -556,6 +537,9 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
             .permissions
             .set_permission_profile(permission_profile)
             .expect("test permission profile should be allowed");
+        let workspace_roots = vec![config.cwd.clone(), writable_root_for_config];
+        config.workspace_roots = workspace_roots.clone();
+        config.permissions.set_workspace_roots(workspace_roots);
         config.config_layer_stack = ConfigLayerStack::default();
     });
     let test = builder.build(&server).await?;
@@ -569,6 +553,7 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -576,9 +561,9 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
     let permissions = permissions_texts(&req.single_request());
     let normalize_line_endings = |s: &str| s.replace("\r\n", "\n");
     let exec_policy = load_exec_policy(&test.config.config_layer_stack).await?;
-    let sandbox_policy = test.config.legacy_sandbox_policy();
-    let expected = PermissionsInstructions::from_policy(
-        &sandbox_policy,
+    let permission_profile = test.config.permissions.effective_permission_profile();
+    let expected = PermissionsInstructions::from_permission_profile(
+        &permission_profile,
         AskForApproval::OnRequest,
         test.config.approvals_reviewer,
         &exec_policy,

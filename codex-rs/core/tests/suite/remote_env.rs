@@ -67,24 +67,29 @@ async fn submit_turn_with_approval_and_environments(
     environments: Vec<TurnEnvironmentSelection>,
 ) -> Result<()> {
     test.codex
-        .submit(Op::UserTurn {
-            environments: Some(environments),
+        .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: prompt.into(),
                 text_elements: Vec::new(),
             }],
+            environments: Some(environments),
             final_output_json_schema: None,
-            cwd: test.cwd.path().to_path_buf(),
-            approval_policy: AskForApproval::OnRequest,
-            approvals_reviewer: Some(ApprovalsReviewer::User),
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            permission_profile: None,
-            model: test.session_configured.model.clone(),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
+            responsesapi_client_metadata: None,
+            thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
+                cwd: Some(test.cwd.path().to_path_buf()),
+                approval_policy: Some(AskForApproval::OnRequest),
+                approvals_reviewer: Some(ApprovalsReviewer::User),
+                sandbox_policy: Some(SandboxPolicy::new_read_only_policy()),
+                collaboration_mode: Some(codex_protocol::config_types::CollaborationMode {
+                    mode: codex_protocol::config_types::ModeKind::Default,
+                    settings: codex_protocol::config_types::Settings {
+                        model: test.session_configured.model.clone(),
+                        reasoning_effort: None,
+                        developer_instructions: None,
+                    },
+                }),
+                ..Default::default()
+            },
         })
         .await?;
 
@@ -347,9 +352,7 @@ async fn apply_patch_freeform_routes_to_selected_remote_environment() -> Result<
     };
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config.include_apply_patch_tool = true;
-    });
+    let mut builder = test_codex();
     let test = builder.build_with_remote_and_local_env(&server).await?;
     let local_cwd = TempDir::new()?;
     let file_name = "apply_patch_remote_freeform.txt";
@@ -435,7 +438,6 @@ async fn apply_patch_approvals_are_remembered_per_environment() -> Result<()> {
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
-        config.include_apply_patch_tool = true;
         config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
         config.approvals_reviewer = ApprovalsReviewer::User;
     });

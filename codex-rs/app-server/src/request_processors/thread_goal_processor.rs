@@ -202,14 +202,17 @@ impl ThreadGoalRequestProcessor {
             thread.prepare_external_goal_mutation().await;
         }
 
+        let should_set_thread_preview = objective.is_some();
         let (goal, previous_status) = (if let Some(objective) = objective {
             let existing_goal = state_db
+                .thread_goals()
                 .get_thread_goal(thread_id)
                 .await
                 .map_err(|err| invalid_request(err.to_string()))?;
             if let Some(goal) = existing_goal.as_ref() {
                 let previous_status = ExternalGoalPreviousStatus::from(goal);
                 state_db
+                    .thread_goals()
                     .update_thread_goal(
                         thread_id,
                         codex_state::ThreadGoalUpdate {
@@ -231,6 +234,7 @@ impl ThreadGoalRequestProcessor {
             } else {
                 let previous_status = ExternalGoalPreviousStatus::NewGoal;
                 state_db
+                    .thread_goals()
                     .replace_thread_goal(
                         thread_id,
                         objective,
@@ -242,6 +246,7 @@ impl ThreadGoalRequestProcessor {
             }
         } else {
             let existing_goal = state_db
+                .thread_goals()
                 .get_thread_goal(thread_id)
                 .await
                 .map_err(|err| invalid_request(err.to_string()))?;
@@ -252,6 +257,7 @@ impl ThreadGoalRequestProcessor {
             };
             let previous_status = ExternalGoalPreviousStatus::from(&existing_goal);
             state_db
+                .thread_goals()
                 .update_thread_goal(
                     thread_id,
                     codex_state::ThreadGoalUpdate {
@@ -270,6 +276,13 @@ impl ThreadGoalRequestProcessor {
                 .map(|goal| (goal, previous_status))
         })
         .map_err(|err| invalid_request(err.to_string()))?;
+        if should_set_thread_preview
+            && let Err(err) = state_db
+                .set_thread_preview_if_empty(thread_id, goal.objective.as_str())
+                .await
+        {
+            warn!("failed to set empty thread preview from goal objective for {thread_id}: {err}");
+        }
         let external_goal_set = ExternalGoalSet {
             goal: goal.clone(),
             previous_status,
@@ -300,6 +313,7 @@ impl ThreadGoalRequestProcessor {
         let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
         let goal = state_db
+            .thread_goals()
             .get_thread_goal(thread_id)
             .await
             .map_err(|err| internal_error(format!("failed to read thread goal: {err}")))?
@@ -357,6 +371,7 @@ impl ThreadGoalRequestProcessor {
             thread_state.listener_command_tx()
         };
         let cleared = state_db
+            .thread_goals()
             .delete_thread_goal(thread_id)
             .await
             .map_err(|err| internal_error(format!("failed to clear thread goal: {err}")))?;
@@ -504,6 +519,8 @@ fn thread_goal_status_to_state(status: ThreadGoalStatus) -> codex_state::ThreadG
     match status {
         ThreadGoalStatus::Active => codex_state::ThreadGoalStatus::Active,
         ThreadGoalStatus::Paused => codex_state::ThreadGoalStatus::Paused,
+        ThreadGoalStatus::Blocked => codex_state::ThreadGoalStatus::Blocked,
+        ThreadGoalStatus::UsageLimited => codex_state::ThreadGoalStatus::UsageLimited,
         ThreadGoalStatus::BudgetLimited => codex_state::ThreadGoalStatus::BudgetLimited,
         ThreadGoalStatus::Complete => codex_state::ThreadGoalStatus::Complete,
     }
@@ -513,6 +530,8 @@ fn thread_goal_status_from_state(status: codex_state::ThreadGoalStatus) -> Threa
     match status {
         codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
         codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
+        codex_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+        codex_state::ThreadGoalStatus::UsageLimited => ThreadGoalStatus::UsageLimited,
         codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
         codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
     }

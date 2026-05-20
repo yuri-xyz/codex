@@ -96,7 +96,6 @@ async fn empty_turn_environments_omits_environment_backed_tools() -> Result<()> 
             .features
             .enable(Feature::UnifiedExec)
             .expect("unified exec should enable for test");
-        config.include_apply_patch_tool = true;
     });
     let test = builder.build(&server).await?;
 
@@ -256,6 +255,7 @@ async fn historical_unavailable_mcp_call_is_exposed_as_placeholder_tool() -> Res
                     enabled_tools: None,
                     disabled_tools: None,
                     scopes: None,
+                    oauth: None,
                     oauth_resource: None,
                     tools: HashMap::new(),
                 },
@@ -555,7 +555,7 @@ async fn shell_enforces_glob_deny_read_policy() -> Result<()> {
                     path: FileSystemPath::GlobPattern {
                         pattern: format!("{}/**/*.env", config.cwd.as_path().display()),
                     },
-                    access: FileSystemAccessMode::None,
+                    access: FileSystemAccessMode::Deny,
                 });
             config
                 .permissions
