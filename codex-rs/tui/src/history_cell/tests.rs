@@ -1410,7 +1410,7 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
 }
 
 #[test]
-fn session_header_includes_reasoning_level_when_present() {
+fn session_header_renders_logo() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-4o".to_string(),
         Some(ReasoningEffortConfig::High),
@@ -1420,17 +1420,21 @@ fn session_header_includes_reasoning_level_when_present() {
     );
 
     let lines = render_lines(&cell.display_lines(/*width*/ 80));
-    let model_line = lines
-        .iter()
-        .find(|line| line.contains("model:"))
-        .expect("model line");
-
-    assert!(model_line.contains("gpt-4o high   fast"));
-    assert!(model_line.contains("/model to change"));
+    assert_eq!(
+        lines,
+        vec![
+            " ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗",
+            "██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝",
+            "██║     ██║   ██║██║  ██║█████╗   ╚███╔╝",
+            "██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗",
+            "╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗",
+            " ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+        ]
+    );
 }
 
 #[test]
-fn session_header_hides_fast_status_when_disabled() {
+fn session_header_raw_lines_include_metadata() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-4o".to_string(),
         Some(ReasoningEffortConfig::High),
@@ -1439,33 +1443,23 @@ fn session_header_hides_fast_status_when_disabled() {
         "test",
     );
 
-    let lines = render_lines(&cell.display_lines(/*width*/ 80));
-    let model_line = lines
-        .iter()
-        .find(|line| line.contains("model:"))
-        .expect("model line");
-
-    assert!(model_line.contains("gpt-4o high"));
-    assert!(!model_line.contains("fast"));
+    let lines = render_lines(&cell.raw_lines());
+    assert!(lines.iter().any(|line| line == "OpenAI Codex (vtest)"));
+    assert!(lines.iter().any(|line| line == "model: gpt-4o high"));
+    assert!(lines.iter().any(|line| line.starts_with("directory: ")));
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "snapshot path rendering differs on Windows"
-)]
-fn session_header_indicates_yolo_mode() {
+fn session_header_returns_no_lines_below_min_width() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-5".to_string(),
         /*reasoning_effort*/ None,
         /*show_fast_status*/ false,
-        test_path_buf("/tmp/project").abs().to_path_buf(),
+        std::env::temp_dir(),
         "test",
-    )
-    .with_yolo_mode(/*yolo_mode*/ true);
+    );
 
-    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
-    insta::assert_snapshot!(rendered);
+    assert!(cell.display_lines(/*width*/ 3).is_empty());
 }
 
 #[test]

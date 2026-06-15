@@ -2,20 +2,14 @@
 
 use super::*;
 
-pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
-
-pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usize> {
-    if width < 4 {
-        return None;
-    }
-    let inner_width = std::cmp::min(width.saturating_sub(4) as usize, max_inner_width);
-    Some(inner_width)
-}
-
-/// Render `lines` inside a border sized to the widest span in the content.
-pub(crate) fn with_border(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    with_border_internal(lines, /*forced_inner_width*/ None)
-}
+const SESSION_HEADER_LOGO: [&str; 6] = [
+    " ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗",
+    "██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝",
+    "██║     ██║   ██║██║  ██║█████╗   ╚███╔╝",
+    "██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗",
+    "╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗",
+    " ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+];
 
 /// Render `lines` inside a border whose inner width is at least `inner_width`.
 ///
@@ -241,9 +235,7 @@ pub(crate) fn has_yolo_permissions(
 pub(crate) struct SessionHeaderHistoryCell {
     version: &'static str,
     model: String,
-    model_style: Style,
     reasoning_effort: Option<ReasoningEffortConfig>,
-    show_fast_status: bool,
     directory: PathBuf,
     yolo_mode: bool,
 }
@@ -268,18 +260,16 @@ impl SessionHeaderHistoryCell {
 
     pub(crate) fn new_with_style(
         model: String,
-        model_style: Style,
+        _model_style: Style,
         reasoning_effort: Option<ReasoningEffortConfig>,
-        show_fast_status: bool,
+        _show_fast_status: bool,
         directory: PathBuf,
         version: &'static str,
     ) -> Self {
         Self {
             version,
             model,
-            model_style,
             reasoning_effort,
-            show_fast_status,
             directory,
             yolo_mode: false,
         }
@@ -331,78 +321,14 @@ impl SessionHeaderHistoryCell {
 
 impl HistoryCell for SessionHeaderHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+        if width < 4 {
             return Vec::new();
-        };
-
-        let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
-
-        // Title line rendered inside the box: ">_ Jailbroken Codex (vX)"
-        let title_spans: Vec<Span<'static>> = vec![
-            Span::from(">_ ").dim(),
-            Span::from("Jailbroken Codex").bold(),
-            Span::from(" ").dim(),
-            Span::from(format!("(v{})", self.version)).dim(),
-        ];
-
-        const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
-        const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
-        const DIR_LABEL: &str = "directory:";
-        const PERMISSIONS_LABEL: &str = "permissions:";
-        let label_width = if self.yolo_mode {
-            DIR_LABEL.len().max(PERMISSIONS_LABEL.len())
-        } else {
-            DIR_LABEL.len()
-        };
-
-        let model_label = format!(
-            "{model_label:<label_width$}",
-            model_label = "model:",
-            label_width = label_width
-        );
-        let reasoning_label = self.reasoning_label();
-        let model_spans: Vec<Span<'static>> = {
-            let mut spans = vec![
-                Span::from(format!("{model_label} ")).dim(),
-                Span::styled(self.model.clone(), self.model_style),
-            ];
-            if let Some(reasoning) = reasoning_label {
-                spans.push(Span::from(" "));
-                spans.push(Span::from(reasoning));
-            }
-            if self.show_fast_status {
-                spans.push("   ".into());
-                spans.push(Span::styled("fast", self.model_style.magenta()));
-            }
-            spans.push("   ".dim());
-            spans.push(CHANGE_MODEL_HINT_COMMAND.cyan());
-            spans.push(CHANGE_MODEL_HINT_EXPLANATION.dim());
-            spans
-        };
-
-        let dir_label = format!("{DIR_LABEL:<label_width$}");
-        let dir_prefix = format!("{dir_label} ");
-        let dir_prefix_width = UnicodeWidthStr::width(dir_prefix.as_str());
-        let dir_max_width = inner_width.saturating_sub(dir_prefix_width);
-        let dir = self.format_directory(Some(dir_max_width));
-        let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
-
-        let mut lines = vec![
-            make_row(title_spans),
-            make_row(Vec::new()),
-            make_row(model_spans),
-            make_row(dir_spans),
-        ];
-
-        if self.yolo_mode {
-            let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
-            lines.push(make_row(vec![
-                Span::from(format!("{permissions_label} ")).dim(),
-                "YOLO mode".magenta().bold(),
-            ]));
         }
 
-        with_border(lines)
+        SESSION_HEADER_LOGO
+            .into_iter()
+            .map(|line| Line::from(line.bold()))
+            .collect()
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
