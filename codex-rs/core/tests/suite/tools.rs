@@ -20,7 +20,6 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::TurnEnvironmentSelection;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -142,10 +141,7 @@ async fn turn_environment_selection_keeps_environment_backed_tools() -> Result<(
 
     test.submit_turn_with_environments(
         "which tools are available?",
-        Some(vec![TurnEnvironmentSelection {
-            environment_id: "local".to_string(),
-            cwd: test.config.cwd.clone(),
-        }]),
+        Some(vec![local(test.config.cwd.clone())]),
     )
     .await?;
 

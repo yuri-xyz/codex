@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::Result;
-use app_test_support::McpProcess;
+use app_test_support::TestAppServer;
 use app_test_support::to_response;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::MarketplaceUpgradeParams;
@@ -128,7 +128,7 @@ fn expected_installed_root(codex_home: &Path, marketplace_name: &str) -> Result<
 }
 
 async fn send_marketplace_upgrade(
-    mcp: &mut McpProcess,
+    mcp: &mut TestAppServer,
     marketplace_name: Option<&str>,
 ) -> Result<MarketplaceUpgradeResponse> {
     let request_id = mcp
@@ -170,7 +170,7 @@ async fn marketplace_upgrade_all_configured_git_marketplaces() -> Result<()> {
     )?;
     disable_plugin_startup_tasks(codex_home.path())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
     let debug_root = expected_installed_root(codex_home.path(), "debug")?;
@@ -224,7 +224,7 @@ async fn marketplace_upgrade_named_marketplace_only() -> Result<()> {
     )?;
     disable_plugin_startup_tasks(codex_home.path())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
     let tools_root = expected_installed_root(codex_home.path(), "tools")?;
@@ -265,7 +265,7 @@ async fn marketplace_upgrade_returns_empty_roots_when_already_up_to_date() -> Re
     )?;
     disable_plugin_startup_tasks(codex_home.path())?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
     let first_response = send_marketplace_upgrade(&mut mcp, Some("debug")).await?;
     assert!(first_response.errors.is_empty());
@@ -293,7 +293,7 @@ async fn marketplace_upgrade_rejects_unknown_or_non_git_marketplace() -> Result<
         &configured_local_marketplace_update(&local_source.path().display().to_string()),
     )?;
 
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
     for marketplace_name in ["missing", "local-only"] {

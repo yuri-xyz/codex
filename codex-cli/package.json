@@ -10,8 +10,7 @@
     "node": ">=16"
   },
   "files": [
-    "bin",
-    "vendor"
+    "bin/codex.js"
   ],
   "repository": {
     "type": "git",

@@ -52,7 +52,7 @@ fn with_border_internal(
         let span_count = line.spans.len();
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(span_count + 4);
         spans.push(Span::from("│ ").dim());
-        spans.extend(line.into_iter());
+        spans.extend(line);
         if used_width < content_width {
             spans.push(Span::from(" ".repeat(content_width - used_width)).dim());
         }
@@ -143,7 +143,7 @@ pub(crate) fn new_session_info(
     // Header box rendered as history (so it appears at the very top)
     let header = SessionHeaderHistoryCell::new(
         session.model.clone(),
-        session.reasoning_effort,
+        session.reasoning_effort.clone(),
         show_fast_status,
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
@@ -307,15 +307,10 @@ impl SessionHeaderHistoryCell {
         formatted
     }
 
-    fn reasoning_label(&self) -> Option<&'static str> {
-        self.reasoning_effort.map(|effort| match effort {
-            ReasoningEffortConfig::Minimal => "minimal",
-            ReasoningEffortConfig::Low => "low",
-            ReasoningEffortConfig::Medium => "medium",
-            ReasoningEffortConfig::High => "high",
-            ReasoningEffortConfig::XHigh => "xhigh",
-            ReasoningEffortConfig::None => "none",
-        })
+    fn reasoning_label(&self) -> Option<&str> {
+        self.reasoning_effort
+            .as_ref()
+            .map(ReasoningEffortConfig::as_str)
     }
 }
 

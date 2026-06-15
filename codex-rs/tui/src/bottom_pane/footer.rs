@@ -68,6 +68,7 @@ pub(crate) struct FooterProps {
     pub(crate) esc_backtrack_hint: bool,
     pub(crate) use_shift_enter_hint: bool,
     pub(crate) is_task_running: bool,
+    pub(crate) queue_submissions: bool,
     pub(crate) collaboration_modes_enabled: bool,
     pub(crate) is_wsl: bool,
     /// Which key the user must press again to quit.
@@ -748,6 +749,8 @@ fn footer_from_props_lines(
             let state = ShortcutsState {
                 use_shift_enter_hint: props.use_shift_enter_hint,
                 esc_backtrack_hint: props.esc_backtrack_hint,
+                is_task_running: props.is_task_running,
+                queue_submissions: props.queue_submissions,
                 is_wsl: props.is_wsl,
                 collaboration_modes_enabled: props.collaboration_modes_enabled,
                 key_hints,
@@ -870,6 +873,8 @@ fn footer_hint_items_line(items: &[(String, String)]) -> Line<'static> {
 struct ShortcutsState {
     use_shift_enter_hint: bool,
     esc_backtrack_hint: bool,
+    is_task_running: bool,
+    queue_submissions: bool,
     is_wsl: bool,
     collaboration_modes_enabled: bool,
     key_hints: FooterKeyHints,
@@ -1102,6 +1107,13 @@ impl ShortcutDescriptor {
         }?;
         let mut line = Line::from(vec![self.prefix.into(), key.into()]);
         match self.id {
+            ShortcutId::QueueMessageTab => {
+                if state.is_task_running || state.queue_submissions {
+                    line.push_span(" to queue message");
+                } else {
+                    line.push_span(" to submit message");
+                }
+            }
             ShortcutId::EditPrevious => {
                 if state.esc_backtrack_hint {
                     line.push_span(" again to edit previous message");
@@ -1111,6 +1123,13 @@ impl ShortcutDescriptor {
                         key.into(),
                         " to edit previous message".into(),
                     ]);
+                }
+            }
+            ShortcutId::Quit => {
+                if state.is_task_running {
+                    line.push_span(" to interrupt");
+                } else {
+                    line.push_span(" to exit");
                 }
             }
             _ => line.push_span(self.label),
@@ -1548,6 +1567,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1565,6 +1585,7 @@ mod tests {
                 esc_backtrack_hint: true,
                 use_shift_enter_hint: true,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1585,7 +1606,26 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: true,
+                is_wsl: false,
+                quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+                status_line_value: None,
+                status_line_enabled: false,
+                key_hints: FooterKeyHints::default_bindings(),
+                active_agent_label: None,
+            },
+        );
+
+        snapshot_footer(
+            "footer_shortcuts_running",
+            FooterProps {
+                mode: FooterMode::ShortcutOverlay,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: true,
+                queue_submissions: false,
+                collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 status_line_value: None,
@@ -1602,6 +1642,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1619,6 +1660,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: true,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1636,6 +1678,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1653,6 +1696,7 @@ mod tests {
                 esc_backtrack_hint: true,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1670,6 +1714,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: true,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1689,6 +1734,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: false,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1708,6 +1754,7 @@ mod tests {
                 esc_backtrack_hint: false,
                 use_shift_enter_hint: false,
                 is_task_running: true,
+                queue_submissions: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1723,6 +1770,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1751,6 +1799,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: true,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1772,6 +1821,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1788,6 +1838,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: true,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1804,6 +1855,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1820,6 +1872,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1850,6 +1903,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1872,6 +1926,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1895,6 +1950,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1919,6 +1975,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1935,6 +1992,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1954,6 +2012,7 @@ mod tests {
             esc_backtrack_hint: false,
             use_shift_enter_hint: false,
             is_task_running: false,
+            queue_submissions: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -2015,6 +2074,8 @@ mod tests {
             .binding_for(ShortcutsState {
                 use_shift_enter_hint: false,
                 esc_backtrack_hint: false,
+                is_task_running: false,
+                queue_submissions: false,
                 is_wsl,
                 collaboration_modes_enabled: false,
                 key_hints: FooterKeyHints::default_bindings(),
