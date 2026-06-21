@@ -6,6 +6,7 @@ use crate::events::TrackEventRequest;
 use crate::facts::AnalyticsFact;
 use crate::facts::AnalyticsJsonRpcError;
 use crate::facts::AppInvocation;
+use crate::facts::CodexGoalEvent;
 use crate::facts::HookRunFact;
 use crate::facts::SkillInvocation;
 use crate::facts::SubAgentThreadStartedInput;
@@ -168,9 +169,15 @@ impl AnalyticsEventsClient {
 
     pub fn track_compaction(&self, _event: crate::facts::CodexCompactionEvent) {}
 
+    pub fn track_goal_event(&self, _event: CodexGoalEvent) {}
+
     pub fn track_turn_resolved_config(&self, _fact: TurnResolvedConfigFact) {}
 
     pub fn track_turn_token_usage(&self, _fact: TurnTokenUsageFact) {}
+
+    pub fn track_turn_profile(&self, _fact: TurnProfileFact) {}
+
+    pub fn track_turn_codex_error(&self, _fact: TurnCodexErrorFact) {}
 
     pub fn track_plugin_installed(&self, _plugin: PluginTelemetryMetadata) {}
 

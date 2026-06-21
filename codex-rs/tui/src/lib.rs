@@ -56,6 +56,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::TrustLevel;
+#[cfg(target_os = "windows")]
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_rollout::StateDbHandle;
 use codex_rollout::state_db;
@@ -1273,6 +1274,7 @@ async fn run_ratatui_app(
     app_server_target: AppServerTarget,
     remote_cwd_override: Option<PathBuf>,
     mut initial_config: Config,
+    manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
     mut cloud_config_bundle: CloudConfigBundleLoader,
@@ -1332,7 +1334,7 @@ async fn run_ratatui_app(
             cli_kv_overrides.clone(),
             overrides.clone(),
             loader_overrides.clone(),
-            cloud_requirements.clone(),
+            cloud_config_bundle.clone(),
             strict_config,
         )
         .await;
@@ -1427,9 +1429,12 @@ async fn run_ratatui_app(
                 exit_reason: ExitReason::UserRequested,
             });
         }
-        trust_decision_was_made |= onboarding_result.directory_trust_decision.is_some();
-        // If this onboarding run included the login step, always refresh cloud requirements and
-        // rebuild config. This avoids missing newly available cloud requirements due to login
+        #[cfg(target_os = "windows")]
+        {
+            trust_decision_was_made = onboarding_result.directory_trust_persisted;
+        }
+        // If this onboarding run included the login step, always refresh the cloud config bundle
+        // and rebuild config. This avoids missing newly available cloud-managed policy due to login
         // status detection edge cases.
         if show_login_screen && !uses_remote_workspace {
             cloud_config_bundle = cloud_config_bundle_loader_for_storage(
@@ -1929,6 +1934,46 @@ async fn load_config_or_exit_with_fallback_cwd(
         Ok(config) => config,
         Err(err) => {
             eprintln!("Error loading configuration: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[allow(clippy::print_stderr)]
+async fn load_bootstrap_config_or_exit(
+    codex_home: &Path,
+    cwd: Option<&AbsolutePathBuf>,
+    cli_kv_overrides: Vec<(String, codex_config::TomlValue)>,
+    loader_overrides: LoaderOverrides,
+    strict_config: bool,
+    cloud_config_bundle: CloudConfigBundleLoader,
+) -> ConfigTomlLoadResult {
+    match load_config_toml_with_layer_stack(
+        codex_home,
+        cwd,
+        cli_kv_overrides,
+        codex_config::ConfigLoadOptions {
+            loader_overrides,
+            strict_config,
+            cloud_config_bundle,
+        },
+    )
+    .await
+    {
+        Ok(config_toml) => config_toml,
+        Err(err) => {
+            let config_error = err
+                .get_ref()
+                .and_then(|err| err.downcast_ref::<ConfigLoadError>())
+                .map(ConfigLoadError::config_error);
+            if let Some(config_error) = config_error {
+                eprintln!(
+                    "Error loading config.toml:\n{}",
+                    format_config_error_with_source(config_error)
+                );
+            } else {
+                eprintln!("Error loading config.toml: {err}");
+            }
             std::process::exit(1);
         }
     }

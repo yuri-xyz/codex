@@ -11,7 +11,6 @@ use crate::app_backtrack::user_count;
 
 use crate::chatwidget::ChatWidgetInit;
 use crate::chatwidget::create_initial_user_message;
-use crate::chatwidget::tests::helpers::render_bottom_popup;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::chatwidget::tests::set_chatgpt_auth;
 use crate::chatwidget::tests::set_fast_mode_test_catalog;
@@ -4156,8 +4155,7 @@ async fn make_test_app_with_channels() -> (
 }
 
 #[tokio::test]
-async fn set_thread_goal_draft_materializes_long_objective_and_confirms_before_paste() -> Result<()>
-{
+async fn set_thread_goal_draft_materializes_long_objective_and_paste() -> Result<()> {
     let mut app = make_test_app().await;
     let mut app_server =
         crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
@@ -4176,13 +4174,12 @@ async fn set_thread_goal_draft_materializes_long_objective_and_confirms_before_p
             objective: objective.clone(),
             ..Default::default()
         },
-        crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
+        crate::app_event::ThreadGoalSetMode::ReplaceExisting,
     )
     .await;
 
     let response = app_server.thread_goal_get(thread_id).await?;
     let goal = response.goal.expect("goal should be set");
-    let saved_objective = goal.objective.clone();
     let codex_home = app_server
         .codex_home_path(&app.chat_widget.config_ref().codex_home)
         .expect("codex home");
@@ -4213,7 +4210,6 @@ async fn set_thread_goal_draft_materializes_long_objective_and_confirms_before_p
     let unix_path = AppServerPath::from_app_server("/tmp/codex\\").join("a");
     assert_eq!(unix_path.as_str(), "/tmp/codex\\/a");
     let attachments_dir = app.chat_widget.config_ref().codex_home.join("attachments");
-    let attachment_count = std::fs::read_dir(&attachments_dir)?.count();
     let placeholder = "[Pasted Content 5 chars]";
     let paste_draft = crate::goal_files::GoalDraft {
         objective: format!("Use {placeholder}"),
@@ -4224,28 +4220,6 @@ async fn set_thread_goal_draft_materializes_long_objective_and_confirms_before_p
         pending_pastes: vec![(placeholder.to_string(), "hello".to_string())],
         ..Default::default()
     };
-
-    app.set_thread_goal_draft(
-        &mut app_server,
-        thread_id,
-        paste_draft.clone(),
-        crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
-    )
-    .await;
-
-    assert_eq!(
-        std::fs::read_dir(&attachments_dir)?.count(),
-        attachment_count
-    );
-    assert_eq!(
-        app_server
-            .thread_goal_get(thread_id)
-            .await?
-            .goal
-            .expect("goal should still be set")
-            .objective,
-        saved_objective
-    );
 
     app.set_thread_goal_draft(
         &mut app_server,
@@ -4357,22 +4331,6 @@ async fn set_thread_goal_draft_materializes_long_objective_and_confirms_before_p
     ));
     app_server.shutdown().await?;
     Ok(())
-}
-
-#[tokio::test]
-async fn replace_goal_confirmation_snapshot() {
-    let mut app = make_test_app().await;
-    app.show_replace_thread_goal_confirmation(
-        ThreadId::new(),
-        goal_files::GoalDraft {
-            objective: "New goal".to_string(),
-            ..Default::default()
-        },
-    );
-    assert_app_snapshot!(
-        "replace_goal_confirmation",
-        render_bottom_popup(&app.chat_widget, /*width*/ 80)
-    );
 }
 
 fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState {

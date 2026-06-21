@@ -773,7 +773,7 @@ impl ChatWidget {
                 let history_objective = draft.objective.clone();
                 self.app_event_tx.send(AppEvent::SetThreadGoalDraft {
                     thread_id,
-                    objective: objective.to_string(),
+                    draft,
                     mode: ThreadGoalSetMode::ReplaceExisting,
                 });
                 self.append_message_history_entry(format!("/goal {history_objective}"));
@@ -993,6 +993,8 @@ impl ChatWidget {
             | SlashCommand::Rename
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::New
+            | SlashCommand::Archive
+            | SlashCommand::Delete
             | SlashCommand::Clear
             | SlashCommand::Resume
             | SlashCommand::Fork

@@ -351,7 +351,7 @@ impl ChatWidget {
         }
     }
 
-    fn restore_composer_state(&mut self, composer: Option<ThreadComposerState>) {
+    fn restore_optional_composer_state(&mut self, composer: Option<ThreadComposerState>) {
         if let Some(composer) = composer {
             let local_image_paths = composer
                 .local_images
@@ -383,12 +383,12 @@ impl ChatWidget {
         let composer = self.current_composer_state();
         if composer.has_content() {
             self.input_queue.stashed_composer_drafts.push_back(composer);
-            self.restore_composer_state(None);
+            self.restore_optional_composer_state(None);
         } else {
             let Some(stashed) = self.input_queue.stashed_composer_drafts.pop_back() else {
                 return false;
             };
-            self.restore_composer_state(Some(stashed));
+            self.restore_optional_composer_state(Some(stashed));
         }
 
         self.refresh_pending_input_preview();
@@ -444,7 +444,7 @@ impl ChatWidget {
             self.input_queue.user_turn_pending_start = input_state.user_turn_pending_start;
             self.update_collaboration_mode_indicator();
             self.refresh_model_dependent_surfaces();
-            self.restore_composer_state(input_state.composer);
+            self.restore_optional_composer_state(input_state.composer);
             let mut pending_steer_history_records = input_state.pending_steer_history_records;
             pending_steer_history_records.resize(
                 input_state.pending_steers.len(),
@@ -486,7 +486,7 @@ impl ChatWidget {
             self.turn_lifecycle
                 .restore_running(/*running*/ false, Instant::now());
             self.input_queue.clear();
-            self.restore_composer_state(None);
+            self.restore_optional_composer_state(None);
         }
         self.turn_lifecycle
             .restore_running(self.turn_lifecycle.agent_turn_running, Instant::now());

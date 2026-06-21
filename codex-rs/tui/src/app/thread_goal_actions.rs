@@ -1,10 +1,11 @@
 use super::App;
 use crate::app_event::ThreadGoalSetMode;
 use crate::app_server_session::AppServerSession;
+use crate::goal_display::GOAL_USAGE;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
 use crate::goal_files;
-use crate::text_formatting::truncate_text;
+#[cfg(test)]
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_protocol::ThreadId;
@@ -126,6 +127,24 @@ impl App {
         draft: goal_files::GoalDraft,
         mode: ThreadGoalSetMode,
     ) {
+        let codex_home = app_server.codex_home_path(&self.config.codex_home);
+        let (objective, output_dir) = match goal_files::materialize_goal_draft(
+            app_server,
+            codex_home.as_ref(),
+            draft,
+        )
+        .await
+        {
+            Ok(materialized) => materialized,
+            Err(err) => {
+                if self.current_displayed_thread_id() != Some(thread_id) {
+                    return;
+                }
+                self.chat_widget.add_error_message(err.to_string());
+                return;
+            }
+        };
+
         let replacing_goal = matches!(mode, ThreadGoalSetMode::ReplaceExisting);
         if replacing_goal {
             let result = app_server.thread_goal_clear(thread_id).await;
@@ -270,6 +289,7 @@ fn is_ephemeral_thread_goal_error(err: &color_eyre::Report) -> bool {
     })
 }
 
+#[cfg(test)]
 fn should_confirm_before_replacing_goal(goal: &ThreadGoal) -> bool {
     // Completed goals are terminal, so `/goal <objective>` can start a fresh goal
     // without asking the user to confirm replacing already-finished work.

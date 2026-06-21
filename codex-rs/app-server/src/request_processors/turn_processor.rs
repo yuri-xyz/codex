@@ -499,7 +499,7 @@ impl TurnRequestProcessor {
 
         let collaboration_mode = params
             .collaboration_mode
-            .map(|mode| self.normalize_turn_start_collaboration_mode(mode));
+            .map(|mode| self.normalize_collaboration_mode(mode));
         let environment_selections = self.parse_environment_selections(params.environments)?;
 
         // Map v2 input items to core input items.
@@ -529,7 +529,7 @@ impl TurnRequestProcessor {
                     service_tier: params.service_tier,
                     effort: params.effort,
                     summary: params.summary,
-                    collaboration_mode: params.collaboration_mode,
+                    collaboration_mode,
                     personality: params.personality,
                 },
             )

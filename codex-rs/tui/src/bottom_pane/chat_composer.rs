@@ -4440,12 +4440,6 @@ impl ChatComposer {
                         &mut state,
                     );
                 } else {
-                    let highlight_style =
-                        textarea_style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
-                    let highlights = highlight_ranges
-                        .into_iter()
-                        .map(|range| (range, highlight_style))
-                        .collect::<Vec<_>>();
                     self.draft.textarea.render_ref_styled_with_highlights(
                         textarea_rect,
                         buf,

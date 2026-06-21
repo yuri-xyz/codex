@@ -184,28 +184,11 @@ impl ThreadGoalRequestProcessor {
                         Some(token_budget) => GoalTokenBudgetUpdate::Set(token_budget),
                         None => GoalTokenBudgetUpdate::Keep,
                     },
-                )
-                .await
-                .and_then(|goal| {
-                    goal.ok_or_else(|| {
-                        anyhow::anyhow!("cannot update goal for thread {thread_id}: no goal exists")
-                    })
-                })
-                .map(|goal| (goal, previous_status))
-        })
-        .map_err(|err| invalid_request(err.to_string()))?;
-        if should_set_thread_preview
-            && let Err(err) = state_db
-                .set_thread_preview_if_empty(thread_id, goal.objective.as_str())
-                .await
-        {
-            warn!("failed to set empty thread preview from goal objective for {thread_id}: {err}");
-        }
-        let external_goal_set = ExternalGoalSet {
-            goal: goal.clone(),
-            previous_status,
-        };
-        let goal = api_thread_goal_from_state(goal);
+                },
+            )
+            .await
+            .map_err(goal_service_error)?;
+        let goal = ThreadGoal::from(outcome.goal.clone());
         let response = ThreadGoalSetResponse { goal: goal.clone() };
         if let Some(request_id) = request_id {
             self.outgoing
@@ -214,9 +197,9 @@ impl ThreadGoalRequestProcessor {
         }
         self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
-        if let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_set(external_goal_set).await;
-        }
+        outcome
+            .apply_runtime_effects(self.goal_service.as_ref())
+            .await;
         Ok(response)
     }
 

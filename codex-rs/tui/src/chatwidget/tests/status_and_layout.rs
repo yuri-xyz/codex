@@ -2128,6 +2128,7 @@ async fn status_line_weekly_limit_reset_renders_reset_time() {
                 window_minutes: Some(10_080),
             }),
             credits: None,
+            individual_limit: None,
         },
     );
 

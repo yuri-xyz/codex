@@ -115,8 +115,6 @@ impl SlashCommand {
                 "include current selection, open files, and other context from your IDE"
             }
             SlashCommand::Personality => "choose a communication style for Codex",
-            SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
-            SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side | SlashCommand::Btw => {

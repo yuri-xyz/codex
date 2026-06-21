@@ -26,29 +26,6 @@ async fn build_config_on_runtime_worker(
 }
 
 impl App {
-    pub(super) fn add_config_persistence_error_message(
-        &mut self,
-        message: impl FnOnce() -> String,
-        err: &anyhow::Error,
-    ) {
-        if Self::is_readonly_nix_store_config_persistence_error(err) {
-            tracing::warn!(
-                error = %err,
-                "suppressed config persistence error for read-only Nix store config"
-            );
-            return;
-        }
-
-        self.chat_widget.add_error_message(message());
-    }
-
-    fn is_readonly_nix_store_config_persistence_error(err: &anyhow::Error) -> bool {
-        err.chain().any(|cause| {
-            let message = cause.to_string();
-            message.contains("failed to persist config.toml at /nix/store/")
-        })
-    }
-
     pub(super) async fn rebuild_config_for_cwd(&self, cwd: PathBuf) -> Result<Config> {
         let mut overrides = self.harness_overrides.clone();
         overrides.cwd = Some(cwd.clone());
@@ -499,12 +476,50 @@ impl App {
         // Persist first so the live session does not diverge from disk if the
         // config edit fails. Runtime/UI state is patched below only after the
         // durable config update succeeds.
-        if let Err(err) = builder.apply().await {
-            tracing::error!(error = %err, "failed to persist feature flags");
-            self.add_config_persistence_error_message(
-                || format!("Failed to update experimental features: {err}"),
-                &err,
+        let write_response = match crate::config_update::write_config_batch(
+            app_server.request_handle(),
+            config_edits,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                let error = crate::config_update::format_config_error(&err);
+                tracing::error!(error = %error, "failed to persist feature flags");
+                self.chat_widget
+                    .add_error_message(format!("Failed to update experimental features: {error}"));
+                return;
+            }
+        };
+        if write_response.status == WriteStatus::OkOverridden {
+            let message = overridden_write_message(&write_response);
+            tracing::warn!(
+                message,
+                "feature flag config write was overridden by effective config"
             );
+            self.chat_widget.add_error_message(format!(
+                "Experimental feature changes were saved but not applied: {message}"
+            ));
+            if let Some(effective_config) = self
+                .read_effective_config_after_overridden_write(
+                    app_server,
+                    "Experimental feature changes",
+                )
+                .await
+            {
+                self.sync_feature_state_from_effective_config(
+                    &effective_config,
+                    &feature_updates_to_apply,
+                );
+                self.sync_auto_review_runtime_state_from_effective_config(
+                    &effective_config,
+                    &feature_updates_to_apply,
+                )
+                .await;
+                if windows_sandbox_changed {
+                    self.propagate_windows_sandbox_turn_context();
+                }
+            }
             return;
         }
 
@@ -623,28 +638,22 @@ impl App {
                 return false;
             }
         };
-        let edits = [
-            ConfigEdit::SetPath {
-                segments: scoped_memory_segments("use_memories"),
-                value: use_memories.into(),
-            },
-            ConfigEdit::SetPath {
-                segments: scoped_memory_segments("generate_memories"),
-                value: generate_memories.into(),
-            },
-        ];
-
-        if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
-            .with_edits(edits)
-            .apply()
-            .await
-        {
-            tracing::error!(error = %err, "failed to persist memory settings");
-            self.add_config_persistence_error_message(
-                || format!("Failed to save memory settings: {err}"),
-                &err,
+        if write_response.status == WriteStatus::OkOverridden {
+            let message = overridden_write_message(&write_response);
+            tracing::warn!(
+                message,
+                "memory settings config write was overridden by effective config"
             );
-            return false;
+            self.chat_widget.add_error_message(format!(
+                "Memory setting changes were saved but not applied: {message}"
+            ));
+            let Some(effective_config) = self
+                .read_effective_config_after_overridden_write(app_server, "Memory setting changes")
+                .await
+            else {
+                return false;
+            };
+            return self.sync_memory_state_from_effective_config(&effective_config);
         }
 
         self.config.memories.use_memories = use_memories;

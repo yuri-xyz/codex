@@ -6,9 +6,6 @@ use crate::hook_runtime::PostCompactHookOutcome;
 use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
-use crate::responses_metadata::CodexResponsesMetadata;
-use crate::responses_metadata::CodexResponsesRequestKind;
-use crate::responses_metadata::CompactionTurnMetadata;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -121,8 +118,6 @@ async fn run_compact_task_inner(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
-    let compaction_metadata =
-        CompactionTurnMetadata::new(trigger, reason, CompactionImplementation::Responses, phase);
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -152,7 +147,6 @@ async fn run_compact_task_inner(
         Arc::clone(&sess),
         Arc::clone(&turn_context),
         initial_context_injection,
-        compaction_metadata,
     )
     .await;
     let status = compaction_status_from_result(&result);
@@ -208,6 +202,7 @@ async fn run_compact_task_inner_impl(
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
+    let window_id = sess.advance_auto_compact_window_id().await;
     let compacted_item = CompactedItem {
         message: summary_text.clone(),
         replacement_history: Some(new_history.clone()),
@@ -441,6 +436,7 @@ fn render_compaction_event(
         ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }
         | ResponseItem::CompactionTrigger
+        | ResponseItem::AgentMessage { .. }
         | ResponseItem::Other
         | ResponseItem::Message { .. } => None,
     }?;
