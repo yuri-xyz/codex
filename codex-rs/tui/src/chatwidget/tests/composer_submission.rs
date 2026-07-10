@@ -974,7 +974,7 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
 }
 
 #[tokio::test]
-async fn pending_steer_interrupt_uses_remapped_binding() {
+async fn pending_steer_interrupt_uses_escape_even_when_interrupt_is_remapped() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let mut keymap = crate::keymap::RuntimeKeymap::defaults();
     keymap.chat.interrupt_turn = vec![crate::key_hint::plain(KeyCode::F(12))];
@@ -986,11 +986,6 @@ async fn pending_steer_interrupt_uses_remapped_binding() {
         .push_back(pending_steer("queued steer"));
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-
-    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
-    assert!(op_rx.try_recv().is_err());
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE));
 
     match op_rx.try_recv() {
         Ok(Op::Interrupt { .. }) => {}
@@ -1238,6 +1233,8 @@ async fn submit_user_message_ignores_inaccessible_app_mentions_from_bindings() {
                 description: Some("Directory-only app".to_string()),
                 logo_url: None,
                 logo_url_dark: None,
+                icon_assets: None,
+                icon_dark_assets: None,
                 distribution_channel: None,
                 branding: None,
                 app_metadata: None,

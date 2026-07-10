@@ -45,8 +45,8 @@ async fn app_server_cyber_policy_error_renders_dedicated_notice() {
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1);
     let rendered = lines_to_single_string(&cells[0]);
-    assert!(rendered.contains("This chat was flagged for possible cybersecurity risk"));
-    assert!(rendered.contains("Trusted Access for Cyber"));
+    assert!(rendered.contains("This content can't be shown"));
+    assert!(rendered.contains("extra caution with cybersecurity requests"));
     assert!(!rendered.contains("server fallback message"));
 }
 
@@ -1597,13 +1597,13 @@ async fn fast_status_indicator_requires_chatgpt_auth() {
 
 #[tokio::test]
 async fn fast_status_indicator_is_hidden_for_models_without_fast_support() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     set_fast_mode_test_catalog(&mut chat);
-    assert!(!get_available_model(&chat, "gpt-5.3-codex").supports_fast_mode());
+    assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
     chat.set_service_tier(Some(ServiceTier::Fast.request_value().to_string()));
     set_chatgpt_auth(&mut chat);
     set_fast_mode_test_catalog(&mut chat);
-    assert!(!get_available_model(&chat, "gpt-5.3-codex").supports_fast_mode());
+    assert!(!get_available_model(&chat, "gpt-5.2").supports_fast_mode());
 
     assert!(!chat.should_show_fast_status(chat.current_model(), chat.current_service_tier(),));
 }
@@ -1892,6 +1892,7 @@ async fn status_widget_and_approval_modal_snapshot() {
         call_id: "call-approve-exec".into(),
         approval_id: Some("call-approve-exec".into()),
         turn_id: "turn-approve-exec".into(),
+        environment_id: None,
         command: vec!["echo".into(), "hello world".into()],
         cwd: test_path_buf("/tmp").abs(),
         reason: Some(
@@ -2137,7 +2138,7 @@ async fn status_line_weekly_limit_reset_renders_reset_time() {
     assert_eq!(
         status_line_text(&chat),
         Some(format!(
-            "weekly 23% · weekly resets in 1d 23h ({expected_reset_time})"
+            "weekly 23% left · weekly resets in 1d 23h ({expected_reset_time})"
         ))
     );
     assert!(
@@ -3709,7 +3710,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         AppServerThreadItem::CommandExecution {
             id: "c1".into(),
             command: codex_shell_command::parse_command::shlex_join(&command),
-            cwd: cwd.clone(),
+            cwd: cwd.clone().into(),
             process_id: None,
             source: ExecCommandSource::Agent,
             status: AppServerCommandExecutionStatus::InProgress,
@@ -3724,7 +3725,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         AppServerThreadItem::CommandExecution {
             id: "c1".into(),
             command: codex_shell_command::parse_command::shlex_join(&command),
-            cwd,
+            cwd: cwd.into(),
             process_id: None,
             source: ExecCommandSource::Agent,
             status: AppServerCommandExecutionStatus::Completed,

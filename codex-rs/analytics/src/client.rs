@@ -3,11 +3,17 @@ use crate::events::GuardianReviewAnalyticsResult;
 use crate::events::GuardianReviewTrackContext;
 #[cfg(test)]
 use crate::events::TrackEventRequest;
+#[cfg(test)]
+use crate::events::TrackEventsRequest;
 use crate::facts::AnalyticsFact;
 use crate::facts::AnalyticsJsonRpcError;
 use crate::facts::AppInvocation;
 use crate::facts::CodexGoalEvent;
+use crate::facts::ExternalAgentConfigImportCompletedInput;
+use crate::facts::ExternalAgentConfigImportFailureInput;
 use crate::facts::HookRunFact;
+use crate::facts::PluginInstallRequested;
+use crate::facts::PluginInstallSource;
 use crate::facts::SkillInvocation;
 use crate::facts::SubAgentThreadStartedInput;
 use crate::facts::TrackEventsContext;
@@ -28,6 +34,8 @@ use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 #[cfg(test)]
 use std::collections::HashSet;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -75,12 +83,19 @@ impl AnalyticsEventsQueue {
         plugin: &PluginTelemetryMetadata,
     ) -> bool {
         let _sender = &self.sender;
-        let key = format!(
-            "{}:{}:{}",
-            tracking.thread_id,
-            tracking.turn_id,
-            plugin.plugin_id.as_key()
-        );
+        let plugin_key = plugin
+            .plugin_id
+            .as_ref()
+            .map(codex_plugin::PluginId::as_key)
+            .or_else(|| plugin.remote_plugin_id.clone())
+            .or_else(|| {
+                plugin
+                    .capability_summary
+                    .as_ref()
+                    .map(|summary| summary.config_name.clone())
+            })
+            .unwrap_or_default();
+        let key = format!("{}:{}:{}", tracking.thread_id, tracking.turn_id, plugin_key);
         self.plugin_used_emitted_keys
             .lock()
             .expect("plugin-used dedupe lock")
@@ -171,6 +186,13 @@ impl AnalyticsEventsClient {
 
     pub fn track_goal_event(&self, _event: CodexGoalEvent) {}
 
+    pub fn track_plugin_install_requested(
+        &self,
+        _tracking: TrackEventsContext,
+        _request: PluginInstallRequested,
+    ) {
+    }
+
     pub fn track_turn_resolved_config(&self, _fact: TurnResolvedConfigFact) {}
 
     pub fn track_turn_token_usage(&self, _fact: TurnTokenUsageFact) {}
@@ -180,6 +202,26 @@ impl AnalyticsEventsClient {
     pub fn track_turn_codex_error(&self, _fact: TurnCodexErrorFact) {}
 
     pub fn track_plugin_installed(&self, _plugin: PluginTelemetryMetadata) {}
+
+    pub fn track_plugin_install_failed(
+        &self,
+        _plugin: PluginTelemetryMetadata,
+        _source: PluginInstallSource,
+        _error_type: String,
+    ) {
+    }
+
+    pub fn track_external_agent_config_import_completed(
+        &self,
+        _input: ExternalAgentConfigImportCompletedInput,
+    ) {
+    }
+
+    pub fn track_external_agent_config_import_failure(
+        &self,
+        _input: ExternalAgentConfigImportFailureInput,
+    ) {
+    }
 
     pub fn track_plugin_uninstalled(&self, _plugin: PluginTelemetryMetadata) {}
 
@@ -203,6 +245,31 @@ impl AnalyticsEventsClient {
         request_id: RequestId,
         response: ClientResponsePayload,
     ) {
+        self.track_response_inner(
+            connection_id,
+            request_id,
+            response,
+            /*thread_originator*/ None,
+        );
+    }
+
+    pub fn track_response_with_thread_originator(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        response: ClientResponsePayload,
+        thread_originator: String,
+    ) {
+        self.track_response_inner(connection_id, request_id, response, Some(thread_originator));
+    }
+
+    fn track_response_inner(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        response: ClientResponsePayload,
+        thread_originator: Option<String>,
+    ) {
         if !matches!(
             response,
             ClientResponsePayload::ThreadStart(_)
@@ -217,6 +284,7 @@ impl AnalyticsEventsClient {
             connection_id,
             request_id,
             response: Box::new(response),
+            thread_originator,
         });
     }
 
@@ -244,6 +312,57 @@ impl AnalyticsEventsClient {
     }
 
     pub fn track_server_request_aborted(&self, _completed_at_ms: u64, _request_id: RequestId) {}
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AnalyticsEventsDestination {
+    Http { url: String },
+    CaptureFile { path: PathBuf },
+}
+
+#[cfg(test)]
+impl AnalyticsEventsDestination {
+    pub(crate) fn from_base_url_and_capture_file(
+        base_url: String,
+        capture_file: Option<PathBuf>,
+    ) -> Self {
+        #[cfg(debug_assertions)]
+        if let Some(path) = capture_file {
+            let _ = crate::analytics_capture::initialize(&path);
+            return Self::CaptureFile { path };
+        }
+
+        let url = format!(
+            "{}/codex/analytics-events/events",
+            base_url.trim_end_matches('/')
+        );
+        Self::Http { url }
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+pub(crate) fn capture_track_events_request(
+    destination: &AnalyticsEventsDestination,
+    payload: &TrackEventsRequest,
+) -> bool {
+    match destination {
+        AnalyticsEventsDestination::CaptureFile { path } => {
+            let _ = crate::analytics_capture::append_payload(path, payload);
+            true
+        }
+        AnalyticsEventsDestination::Http { .. } => false,
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+pub(crate) async fn send_track_events_request<Auth>(
+    _auth: &Auth,
+    destination: &AnalyticsEventsDestination,
+    events: Vec<TrackEventRequest>,
+) {
+    let payload = TrackEventsRequest { events };
+    let _ = capture_track_events_request(destination, &payload);
 }
 
 #[cfg(test)]

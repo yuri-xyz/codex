@@ -7,7 +7,7 @@ exec running:
 
 exec and hook running:
 active exec:
-• Running echo done
+◦ Running echo done
 active hooks:
 • Running PostToolUse hook: checking output policy
 

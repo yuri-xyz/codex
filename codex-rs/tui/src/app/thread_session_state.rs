@@ -404,19 +404,22 @@ mod tests {
         let read_thread_id =
             ThreadId::from_string("00000000-0000-0000-0000-000000000405").expect("valid thread");
         let primary_session = ThreadSessionState {
-            permission_profile: PermissionProfile::workspace_write(),
+            permission_profile: PermissionProfile::read_only(),
             ..test_thread_session(primary_thread_id, test_path_buf("/tmp/primary"))
         };
         let read_thread = Thread {
             id: read_thread_id.to_string(),
+            extra: None,
             session_id: read_thread_id.to_string(),
             forked_from_id: None,
             parent_thread_id: None,
             preview: "read thread".to_string(),
             ephemeral: false,
+            history_mode: Default::default(),
             model_provider: "read-provider".to_string(),
             created_at: 1,
             updated_at: 2,
+            recency_at: Some(2),
             status: codex_app_server_protocol::ThreadStatus::Idle,
             path: None,
             cwd: test_path_buf("/tmp/read").abs(),
