@@ -64,3 +64,4 @@ git log --author="yuri-xyz" --oneline
 - Replaced the boxed TUI startup header with a large Codex logo banner for a cleaner fork-specific launch screen.
 - Synced with upstream `openai/codex` main (784 commits) while preserving local privacy stubs, disabled release workflow files, fixed fork versioning, hidden feedback/plan surfaces, deterministic compaction, and the large Codex startup banner.
 - Synced with upstream `openai/codex` main (635 commits) while preserving local privacy/reporting stubs, disabled workflow files, deterministic compaction, hidden plan/plugin command surfaces, fork trust defaults, and remote goal controls.
+- Added the formatter helper tools required by this fork's Nix dev shell so repo formatting checks work without host-installed `dotslash` or `uv`.

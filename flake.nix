@@ -48,7 +48,7 @@
           };
         in
         {
-          codex-rs = codex-rs;
+          inherit codex-rs;
           default = codex-rs;
         }
       );
@@ -74,6 +74,8 @@
               pkgs.cmake
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
+              pkgs.dotslash
+              pkgs.uv
             ];
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.libcap.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
