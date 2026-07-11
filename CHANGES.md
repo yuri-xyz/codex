@@ -66,4 +66,5 @@ git log --author="yuri-xyz" --oneline
 - Synced with upstream `openai/codex` main (635 commits) while preserving local privacy/reporting stubs, disabled workflow files, deterministic compaction, hidden plan/plugin command surfaces, fork trust defaults, and remote goal controls.
 - Added the formatter helper tools required by this fork's Nix dev shell so repo formatting checks work without host-installed `dotslash` or `uv`.
 - Refreshed the Nix package hash for the forked `tokio-tungstenite` source so local flake profile installs can build reproducibly.
+- Colored user-authored transcript prompts green in the TUI so submitted messages stand out from regular assistant history.
 - Switched the Nix Rust package build to crane so dependency artifacts are cached separately from the final Codex binary build.

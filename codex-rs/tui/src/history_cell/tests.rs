@@ -1990,6 +1990,31 @@ fn user_history_cell_wraps_and_prefixes_each_line_snapshot() {
 }
 
 #[test]
+fn user_history_cell_colors_prompt_and_message() {
+    let cell = UserHistoryCell {
+        message: "remember me".to_string(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    };
+
+    let lines = cell.display_lines(/*width*/ 80);
+    let message_line = lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .contains("remember me")
+        })
+        .expect("user message line");
+
+    assert_eq!(message_line.style.fg, Some(Color::Green));
+    assert_eq!(message_line.spans[0].style.fg, Some(Color::Green));
+}
+
+#[test]
 fn user_history_cell_renders_remote_image_urls() {
     let cell = UserHistoryCell {
         message: "describe these".to_string(),
